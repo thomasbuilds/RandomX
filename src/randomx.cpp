@@ -203,6 +203,11 @@ extern "C" {
 		assert(startItem < DatasetItemCount && itemCount <= DatasetItemCount);
 		assert(startItem + itemCount <= DatasetItemCount);
 
+		//items beyond the end of the Dataset would be written past the end of its memory
+		if (startItem >= DatasetItemCount || itemCount > DatasetItemCount - startItem) {
+			return;
+		}
+
 		if (itemCount < 4) {
 			alignas(64) uint8_t buf[randomx::CacheLineSize * 4];
 			cache->datasetInit(cache, buf, startItem, startItem + 4);

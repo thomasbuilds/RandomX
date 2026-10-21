@@ -61,6 +61,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .global DECL(randomx_riscv64_vector_sshash_begin)
 .global DECL(randomx_riscv64_vector_sshash_imul_rcp_literals)
 .hidden DECL(randomx_riscv64_vector_sshash_imul_rcp_literals)
+.global DECL(randomx_riscv64_vector_sshash_imul_rcp_literals_end)
 .global DECL(randomx_riscv64_vector_sshash_dataset_init)
 .global DECL(randomx_riscv64_vector_sshash_generated_instructions)
 .global DECL(randomx_riscv64_vector_sshash_generated_instructions_end)
@@ -111,7 +112,10 @@ sshash_constant_7: .dword 9549104520008361294
 sshash_offsets:    .dword 0,1,2,3
 store_offsets:     .dword 0,64,128,192
 
-DECL(randomx_riscv64_vector_sshash_imul_rcp_literals): .fill 512,8,0
+// One literal per IMUL_RCP instruction of all SuperscalarHash programs: sized for the worst case
+// (every instruction of every program is an IMUL_RCP) so that the generator can never overflow it
+DECL(randomx_riscv64_vector_sshash_imul_rcp_literals): .fill RANDOMX_CACHE_ACCESSES * (3 * RANDOMX_SUPERSCALAR_LATENCY + 2), 8, 0
+DECL(randomx_riscv64_vector_sshash_imul_rcp_literals_end):
 
 /*
 Reference: https://github.com/tevador/RandomX/blob/master/doc/specs.md#73-dataset-block-generation
@@ -220,7 +224,10 @@ DECL(randomx_riscv64_vector_sshash_generated_instructions):
 	// Step 6. randomx_riscv64_vector_sshash_xor
 	//
 	// Above steps will be repeated RANDOMX_CACHE_ACCESSES times
-	.fill RANDOMX_CACHE_ACCESSES * 2048, 4, 0
+	//
+	// Worst case per program: 20 bytes per SuperscalarHash instruction (IROR_C without Zvkb), plus the
+	// cache prefetch and xor templates, the literal pointer rebases and the final register move (< 256 bytes)
+	.fill RANDOMX_CACHE_ACCESSES * ((3 * RANDOMX_SUPERSCALAR_LATENCY + 2) * 5 + 64), 4, 0
 
 DECL(randomx_riscv64_vector_sshash_generated_instructions_end):
 	// Step 9. Concatenate registers r0-r7 in little endian format to get the final Dataset item data.

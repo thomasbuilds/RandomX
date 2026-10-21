@@ -192,7 +192,7 @@ The default value of 16 KiB was selected to be about half of the per-core L1 cac
 Instruction frequencies (per 256 instructions).
 
 #### Permitted values
-There is a total of 29 different instructions. The sum of frequencies must be equal to 256.
+There is a total of 29 different instructions. The sum of frequencies must be equal to 256. Each frequency must be one of the values 0-33, 40, 64, 128, 232 or 256 (the instruction tables are expanded with repetition macros for these values only).
 
 #### Notes
 
@@ -212,6 +212,16 @@ Making changes to the default values is not recommended. The only exceptions are
 |-|------|------|
 |`RANDOMX_FREQ_FADD_M`|5|4|
 |`RANDOMX_FREQ_FSUB_M`|5|6|
+
+## Implementation limits
+
+The JIT compilers encode some parameters in instruction immediates and fixed-size buffers. A configuration that violates one of the limits below fails to compile (static assertion or `#error`) instead of producing wrong hashes:
+
+* ARM64 JIT: `RANDOMX_JUMP_BITS` and `RANDOMX_JUMP_OFFSET` must both be 8, `RANDOMX_DATASET_EXTRA_SIZE` must be smaller than 1 GiB, `RANDOMX_PROGRAM_MAX_SIZE` must not exceed 21000, `RANDOMX_SCRATCHPAD_L1` must be at least 16, and `RANDOMX_SCRATCHPAD_L3` and `RANDOMX_DATASET_BASE_SIZE` must be at least 128.
+* RISC-V JIT: `RANDOMX_PROGRAM_MAX_SIZE` must not exceed 494, the SuperscalarHash code must be reachable from the program code with a 1 MiB jump (`RANDOMX_CACHE_ACCESSES` up to about 240 with the default program size), and for the vector JIT `RANDOMX_CACHE_ACCESSES * (3 * RANDOMX_SUPERSCALAR_LATENCY + 2)` must stay below about 50000.
+* `RANDOMX_ARGON_MEMORY` must be a multiple of `4 * RANDOMX_ARGON_LANES` (Argon2 processes each lane in 4 segments).
+
+The reference values checked by `randomx-tests` are valid for the default configuration only. With a different `RANDOMX_ARGON_SALT` the hash tests are skipped; other changes make the test suite stop at the first reference value that no longer matches.
 
 ## Unsafe configurations
 

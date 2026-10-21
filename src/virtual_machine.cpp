@@ -96,8 +96,6 @@ void randomx_vm::initialize() {
 
 namespace randomx {
 
-	alignas(16) volatile static rx_vec_i128 aesDummy;
-
 	template<class Allocator, bool softAes>
 	VmBase<Allocator, softAes>::~VmBase() {
 		Allocator::freeMemory(scratchpad, ScratchpadSize);
@@ -111,15 +109,17 @@ namespace randomx {
 		if (!softAes && !cpu.hasAes())
 			throw std::runtime_error(platformError);
 #else
-#if defined(_M_X64) || defined(__x86_64__) || (defined(__aarch64__) && (defined(HAVE_HWCAP) || defined(__APPLE__)))
+#if defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__) || (defined(__aarch64__) && (defined(HAVE_HWCAP) || defined(__APPLE__)))
 		//hardware AES support can be detected reliably on these platforms: fail gracefully instead of raising SIGILL
 		if (!softAes && !cpu.hasAes())
 			throw std::runtime_error("Platform doesn't support hardware AES");
 #endif
 		if (!softAes) { //if hardware AES is not supported, it's better to fail now than to return a ticking bomb
-			rx_vec_i128 tmp = rx_load_vec_i128((const rx_vec_i128*)&aesDummy);
+			//(a local value is used so that concurrent calls do not race on a shared variable)
+			rx_vec_i128 tmp = rx_set_int_vec_i128(0x1a2b3c4d, 0x5e6f7081, 0x92a3b4c5, 0xd6e7f809);
 			tmp = rx_aesenc_vec_i128(tmp, tmp);
-			rx_store_vec_i128((rx_vec_i128*)&aesDummy, tmp);
+			volatile int aesProbe = rx_vec_i128_x(tmp);
+			(void)aesProbe;
 		}
 #endif
 		scratchpad = (uint8_t*)Allocator::allocMemory(ScratchpadSize);

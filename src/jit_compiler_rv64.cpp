@@ -123,6 +123,9 @@ namespace randomx {
 	constexpr int32_t SuperScalarLiteralPoolRefOffset = RandomXCodeSize + (RANDOMX_CACHE_ACCESSES - 1) * LiteralPoolSize + LiteralPoolOffset;
 	constexpr int32_t SuperScalarHashOffset = SuperScalarLiteralPoolOffset + SuperscalarLiteraPoolSize;
 
+	//the program code reaches the SuperscalarHash code with a jal instruction (+-1 MiB)
+	static_assert(SuperScalarHashOffset < (1 << 20), "RISC-V JIT: RANDOMX_CACHE_ACCESSES or RANDOMX_PROGRAM_MAX_SIZE is too large");
+
 	constexpr int maskLog2(uint32_t x, int prev) {
 		return x == 1 ? prev : maskLog2(x >> 1, prev + 1);
 	}

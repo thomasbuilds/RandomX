@@ -56,6 +56,15 @@ typedef struct randomx_dataset randomx_dataset;
 typedef struct randomx_cache randomx_cache;
 typedef struct randomx_vm randomx_vm;
 
+/*
+ * Thread safety: once initialized, a randomx_cache and a randomx_dataset can be shared by any number
+ * of virtual machines and threads. randomx_init_cache and randomx_init_dataset must not run concurrently
+ * with any other use of the same object; randomx_init_dataset may be called from several threads at the
+ * same time with non-overlapping item ranges. A randomx_vm must be used by one thread at a time. The
+ * initialization checks made by randomx_create_vm and randomx_vm_set_cache are sanity checks only; the
+ * caller is responsible for ordering the initialization of an object before its use.
+ */
+
 
 #if defined(__cplusplus)
 
@@ -152,6 +161,9 @@ RANDOMX_EXPORT void randomx_release_cache(randomx_cache* cache);
  *
  * @return Pointer to an allocated randomx_dataset structure.
  *         NULL is returned if memory allocation fails.
+ *
+ * Note: the Dataset needs a 64-bit build. In a 32-bit process, the allocation of the
+ *       2080 MiB Dataset fails (NULL is returned) and only the light mode is available.
  */
 RANDOMX_EXPORT randomx_dataset *randomx_alloc_dataset(randomx_flags flags);
 
@@ -171,7 +183,8 @@ RANDOMX_EXPORT unsigned long randomx_dataset_item_count(void);
  * @param dataset is a pointer to a previously allocated randomx_dataset structure. Must not be NULL.
  * @param cache is a pointer to a previously allocated and initialized randomx_cache structure. Must not be NULL.
  * @param startItem is the item number where initialization should start.
- * @param itemCount is the number of items that should be initialized.
+ * @param itemCount is the number of items that should be initialized. The sum of startItem and
+ *        itemCount must not exceed randomx_dataset_item_count() (out-of-range calls are ignored).
 */
 RANDOMX_EXPORT void randomx_init_dataset(randomx_dataset *dataset, randomx_cache *cache, unsigned long startItem, unsigned long itemCount);
 

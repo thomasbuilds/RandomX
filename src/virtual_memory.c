@@ -248,7 +248,7 @@ void freePagedMemory(void* ptr, size_t bytes) {
 #include <stdio.h>
 /* size of the default huge page (the one used by MAP_HUGETLB without a size flag) */
 static size_t getHugePageSize(void) {
-	size_t result = 2 * 1024 * 1024;
+	size_t result = (size_t)2 * 1024 * 1024;
 	FILE* f = fopen("/proc/meminfo", "r");
 	if (f != NULL) {
 		char line[256];
@@ -260,7 +260,7 @@ static size_t getHugePageSize(void) {
 				break;
 			}
 		}
-		fclose(f);
+		(void)fclose(f);
 	}
 	return result;
 }

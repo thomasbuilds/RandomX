@@ -110,13 +110,20 @@ int main() {
 	//std::cout << "Allocating randomx_cache..." << std::endl;
 	cache = randomx_alloc_cache(RANDOMX_FLAG_DEFAULT);
 
-	runTest("Cache initialization", RANDOMX_ARGON_ITERATIONS == 3 && RANDOMX_ARGON_LANES == 1 && RANDOMX_ARGON_MEMORY == 262144 && stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"),	[]() {
+	const bool defaultArgon2 = RANDOMX_ARGON_ITERATIONS == 3 && RANDOMX_ARGON_LANES == 1 && RANDOMX_ARGON_MEMORY == 262144 && stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03");
+
+	runTest("Cache initialization", defaultArgon2, []() {
 		initCache("test key 000");
 		uint64_t* cacheMemory = (uint64_t*)cache->memory;
 		assert(cacheMemory[0] == 0x191e0e1d23c02186);
 		assert(cacheMemory[1568413] == 0xf1b62fe6210bf8b1);
 		assert(cacheMemory[33554431] == 0x1f47f056d05cd99b);
 	});
+
+	if (!defaultArgon2) {
+		//the reference values cannot be checked, but the following tests need an initialized cache
+		initCache("test key 000");
+	}
 
 	runTest("SuperscalarHash generator", RANDOMX_SUPERSCALAR_LATENCY == 170, []() {
 		alignas(16) char sprogHash[32];

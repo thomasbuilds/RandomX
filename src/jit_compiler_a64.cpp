@@ -34,6 +34,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "virtual_memory.h"
 #include "soft_aes.h"
 
+//the light-mode Dataset offset is applied with two 12-bit immediates (24 bits of Dataset items)
+static_assert(RANDOMX_DATASET_EXTRA_SIZE / 64 < (1 << 24), "ARM64 JIT: RANDOMX_DATASET_EXTRA_SIZE must be smaller than 1 GiB");
+//branches and literal loads inside the program use 19-bit offsets (+-1 MiB) over a 48-byte slot per instruction
+static_assert(RANDOMX_PROGRAM_MAX_SIZE <= 21000, "ARM64 JIT: RANDOMX_PROGRAM_MAX_SIZE is too large");
+//the address masks are encoded as bitmask immediates
+static_assert(RANDOMX_SCRATCHPAD_L1 >= 16 && RANDOMX_SCRATCHPAD_L3 >= 128 && RANDOMX_DATASET_BASE_SIZE >= 128, "ARM64 JIT: scratchpad or Dataset size is too small");
+
 namespace ARMV8A {
 
 constexpr uint32_t B           = 0x14000000;

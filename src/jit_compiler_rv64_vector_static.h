@@ -45,6 +45,7 @@ void randomx_riscv64_vector_code_begin();
 
 void randomx_riscv64_vector_sshash_begin();
 void randomx_riscv64_vector_sshash_imul_rcp_literals();
+void randomx_riscv64_vector_sshash_imul_rcp_literals_end();
 void randomx_riscv64_vector_sshash_dataset_init(struct randomx_cache* cache, uint8_t* output_buf, uint32_t startBlock, uint32_t endBlock);
 void randomx_riscv64_vector_sshash_cache_prefetch();
 void randomx_riscv64_vector_sshash_generated_instructions();

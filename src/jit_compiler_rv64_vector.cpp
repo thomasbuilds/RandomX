@@ -34,8 +34,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "superscalar.hpp"
 #include "program.hpp"
 #include "soft_aes.h"
+#include <stdexcept>
 
 namespace randomx {
+
+//the IMUL_RCP literal of a program is addressed with a 12-bit offset from a pointer that can be rebased once by 2040 bytes
+static_assert(RANDOMX_PROGRAM_MAX_SIZE <= 511, "RISC-V vector JIT: RANDOMX_PROGRAM_MAX_SIZE must not exceed 511");
+//the generated SuperscalarHash code ends with a jump over the unused part of its area (J reaches +-1 MiB)
+static_assert((size_t)RANDOMX_CACHE_ACCESSES * ((3 * RANDOMX_SUPERSCALAR_LATENCY + 2) * 5 + 64) * 4 < (1u << 20), "RISC-V vector JIT: RANDOMX_CACHE_ACCESSES * RANDOMX_SUPERSCALAR_LATENCY is too large");
 
 constexpr int maskLog2(uint32_t x, int prev) {
 	return x == 1 ? prev : maskLog2(x >> 1, prev + 1);
@@ -56,10 +62,19 @@ void* generateDatasetInitVectorRV64(uint8_t* buf, SuperscalarProgramList &progra
 
 	uint8_t* literals = buf + DIST(randomx_riscv64_vector_code_begin, randomx_riscv64_vector_sshash_imul_rcp_literals);
 	uint8_t* cur_literal = literals;
+	const uint8_t* const literals_end = buf + DIST(randomx_riscv64_vector_code_begin, randomx_riscv64_vector_sshash_imul_rcp_literals_end);
+	const uint8_t* const e = buf + DIST(randomx_riscv64_vector_code_begin, randomx_riscv64_vector_sshash_generated_instructions_end);
 
 	const size_t num_programs = programs.size();
 
 	for (size_t i = 0; i < num_programs; ++i) {
+		// The template areas are sized for the worst case; verify it anyway before writing into the buffer
+		// (up to 20 bytes per instruction, one literal pointer rebase per 255 literals, the templates and the final jumps)
+		const size_t max_code = DIST(randomx_riscv64_vector_sshash_cache_prefetch, randomx_riscv64_vector_sshash_end) + programs[i].size * 20 + (programs[i].size / 255 + 1) * 4 + 8;
+		if ((size_t)(e - p) < max_code || (size_t)(literals_end - cur_literal) < programs[i].size * 8) {
+			throw std::runtime_error("RISC-V vector JIT: the SuperscalarHash code buffer is too small");
+		}
+
 		// Step 4
 		size_t k = DIST(randomx_riscv64_vector_sshash_cache_prefetch, randomx_riscv64_vector_sshash_xor);
 		memcpy(p, reinterpret_cast<void*>(randomx_riscv64_vector_sshash_cache_prefetch), k);
@@ -216,7 +231,6 @@ void* generateDatasetInitVectorRV64(uint8_t* buf, SuperscalarProgramList &progra
 	}
 
 	// Emit "J randomx_riscv64_vector_sshash_generated_instructions_end" instruction
-	const uint8_t* e = buf + DIST(randomx_riscv64_vector_code_begin, randomx_riscv64_vector_sshash_generated_instructions_end);
 	const uint32_t j = JUMP(e - p);
 	memcpy(p, &j, 4);
 

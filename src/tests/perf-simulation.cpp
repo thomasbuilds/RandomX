@@ -34,6 +34,11 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <algorithm>
 #include <iomanip>
 
+//the simulation uses the RandomX v2 program size
+#ifndef RANDOMX_PROGRAM_SIZE
+#define RANDOMX_PROGRAM_SIZE RANDOMX_PROGRAM_SIZE_V2
+#endif
+
 int analyze(randomx::Program& p);
 int executeInOrder(randomx::Program& p, randomx::Program& original, bool print, int executionPorts, int memoryPorts, bool speculate, int pipeline);
 int executeOutOfOrder(randomx::Program& p, randomx::Program& original, bool print, int executionPorts, int memoryPorts, bool speculate, int pipeline);
@@ -183,9 +188,10 @@ int executeInOrder(randomx::Program& p, randomx::Program& original, bool print, 
 		int i = 0;
 		while (branchCount--) {
 			auto entropy = p.getEntropy(i / 8);
-			entropy >> (i % 8) * 8;
+			entropy >>= (i % 8) * 8;
 			if ((entropy & 0xff) == 0) // 1/256 chance to flush the pipeline
 				cycle += pipeline - 1;
+			i = (i + 1) % 128; //16 x 8 entropy bytes
 		}
 	}
 	return cycle;
@@ -313,9 +319,10 @@ int executeOutOfOrder(randomx::Program& p, randomx::Program& original, bool prin
 		int i = 0;
 		while (branchCount--) {
 			auto entropy = p.getEntropy(i / 8);
-			entropy >> (i % 8) * 8;
+			entropy >>= (i % 8) * 8;
 			if ((entropy & 0xff) == 0) // 1/256 chance to flush the pipeline
 				cycle += pipeline - 1;
+			i = (i + 1) % 128; //16 x 8 entropy bytes
 		}
 	}
 	return cycle;
@@ -332,7 +339,7 @@ struct RegisterUsage {
 inline int getConditionRegister(RegisterUsage(&registerUsage)[randomx::RegistersCount]) {
 	int min = INT_MAX;
 	int minCount = 0;
-	int minIndex;
+	int minIndex = 0;
 			//prefer registers that have been used as a condition register fewer times
 		for (unsigned i = 0; i < randomx::RegistersCount; ++i) {
 		if (registerUsage[i].lastUsed < min || (registerUsage[i].lastUsed == min && registerUsage[i].count < minCount)) {
