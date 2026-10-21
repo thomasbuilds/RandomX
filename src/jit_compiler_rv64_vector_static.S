@@ -43,7 +43,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define DECL(x) x
 
+#if defined(__ELF__)
+/* the templates are only read (copied into the JIT buffer), never executed in place */
+.section .rodata
+#else
 .text
+#endif
 
 #ifndef __riscv_v
 #error This file requires rv64gcv
@@ -867,6 +872,8 @@ randomx_riscv64_vector_program_main_loop_end:
 
 	ret
 
+	// 8-byte aligned: the main loop reads both values with "ld"
+.balign 8
 DECL(randomx_riscv64_vector_program_main_loop_light_mode_data):
 	// 1) Pointer to the scalar dataset init function
 	// 2) Dataset offset

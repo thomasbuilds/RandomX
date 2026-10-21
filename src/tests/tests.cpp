@@ -17,9 +17,39 @@
 #include "../aes_hash.hpp"
 #include "../virtual_machine.hpp"
 #include "../cpu.hpp"
+#include "../soft_aes.h"
+#include <vector>
+#include <thread>
+#include <cstdlib>
 
 randomx_cache* cache;
 randomx_vm* vm = nullptr;
+
+#ifdef RANDOMX_FORCE_SECURE
+constexpr randomx_flags jitFlags = RANDOMX_FLAG_JIT | RANDOMX_FLAG_SECURE;
+#else
+constexpr randomx_flags jitFlags = RANDOMX_FLAG_JIT;
+#endif
+
+static const char* const hashA_v1 = "639183aae1bf4c9a35884cb46b09cad9175f04efd7684e7262a0ac1c2f0b4e3f";
+static const char* const hashA_v2 = "22ec6b861b3eb23686b2efbad69513c967ecfce80983df66c9c5b4fbfb4cdb6f";
+static const char* const hashB_v1 = "300a0adb47603dedb42228ccb2b211104f4da45af709cd7547cd049e9489c969";
+static const char* const hashB_v2 = "9e2c772c12fd48f93c14c97fdc89d556264d9100597023f44d9163e279012ecf";
+static const char* const hashC_v1 = "c36d4ed4191e617309867ed66a443be4075014e2b061bcdaf9ce7b721d2b77a8";
+static const char* const hashC_v2 = "4d6b063a1a603751d525f18a171336a4002f2f06df6c17e4b25fe17e17796e42";
+
+// Computes the three standard test vectors with the batch API and checks them against the v1/v2 references.
+static void checkStandardVectors(randomx_vm* machine) {
+	const bool v2 = (machine->getFlags() & RANDOMX_FLAG_V2) != 0;
+	char hash1[RANDOMX_HASH_SIZE], hash2[RANDOMX_HASH_SIZE], hash3[RANDOMX_HASH_SIZE];
+	randomx_calculate_hash_first(machine, "This is a test", 14);
+	randomx_calculate_hash_next(machine, "Lorem ipsum dolor sit amet", 26, hash1);
+	randomx_calculate_hash_next(machine, "sed do eiusmod tempor incididunt ut labore et dolore magna aliqua", 65, hash2);
+	randomx_calculate_hash_last(machine, hash3);
+	assert(equalsHex(hash1, v2 ? hashA_v2 : hashA_v1));
+	assert(equalsHex(hash2, v2 ? hashB_v2 : hashB_v1));
+	assert(equalsHex(hash3, v2 ? hashC_v2 : hashC_v1));
+}
 
 template<size_t N>
 void initCache(const char (&key)[N]) {
@@ -174,6 +204,59 @@ int main() {
 		hex2bin("6c19536eb2de31b6c0065f7f116e86f960d8af0c57210a6584c3237b9d064dc7", 64, state);
 		fillAes1Rx4<true>(state, sizeof(state), state);
 		assert(equalsHex(state, "fa89397dd6ca422513aeadba3f124b5540324c4ad4b6db434394307a17c833ab"));
+	});
+
+	// Single AES round known-answer test (Intel AES-NI white paper AESENC/AESDEC example, bytes in memory order).
+	// This is the primitive used by the RandomX v2 group F/E register mix (specs.md 4.6.2 step 10).
+	auto aesRoundKat = [](bool soft) {
+		alignas(16) char in[16], key[16], expEnc[16], expDec[16], res[16];
+		hex2bin((char*)"5d47535d726f74636556747365545b7b", 32, in);
+		hex2bin((char*)"5d6e6f726575475b2979616853286948", 32, key);
+		hex2bin((char*)"95e5d7de584b108bc5a3db9f2f1c31a8", 32, expEnc);
+		hex2bin((char*)"2a3930b75eb98eb58727eafa42c38a13", 32, expDec);
+		rx_vec_i128 vin = rx_load_vec_i128((const rx_vec_i128*)in);
+		rx_vec_i128 vkey = rx_load_vec_i128((const rx_vec_i128*)key);
+		rx_store_vec_i128((rx_vec_i128*)res, soft ? aesenc<true>(vin, vkey) : aesenc<false>(vin, vkey));
+		assert(memcmp(res, expEnc, 16) == 0);
+		rx_store_vec_i128((rx_vec_i128*)res, soft ? aesdec<true>(vin, vkey) : aesdec<false>(vin, vkey));
+		assert(memcmp(res, expDec, 16) == 0);
+	};
+
+	runTest("AES round known-answer (soft AES)", true, [&]() {
+		aesRoundKat(true);
+	});
+
+	runTest("AES round known-answer (hardware AES)", HAVE_AES && randomx::cpu.hasAes(), [&]() {
+		aesRoundKat(false);
+		// soft AES must equal hardware AES on pseudo-random (state, key) pairs
+		alignas(16) char buf[64];
+		blake2b(buf, sizeof(buf), "RandomX AES", 11, nullptr, 0);
+		for (int i = 0; i < 256; ++i) {
+			rx_vec_i128 a = rx_load_vec_i128((const rx_vec_i128*)buf);
+			rx_vec_i128 b = rx_load_vec_i128((const rx_vec_i128*)(buf + 16));
+			alignas(16) char r1[16], r2[16];
+			rx_store_vec_i128((rx_vec_i128*)r1, aesenc<true>(a, b));
+			rx_store_vec_i128((rx_vec_i128*)r2, aesenc<false>(a, b));
+			assert(memcmp(r1, r2, 16) == 0);
+			rx_store_vec_i128((rx_vec_i128*)r1, aesdec<true>(a, b));
+			rx_store_vec_i128((rx_vec_i128*)r2, aesdec<false>(a, b));
+			assert(memcmp(r1, r2, 16) == 0);
+			blake2b(buf, sizeof(buf), buf, sizeof(buf), nullptr, 0);
+		}
+	});
+
+	// The implementation always generates 128 + 8 * RANDOMX_PROGRAM_MAX_SIZE bytes with AesGenerator4R;
+	// v1 hashes stay valid only because the generator output is prefix-stable (specs.md chapter 2, step 7).
+	runTest("AesGenerator4R prefix property", true, []() {
+		alignas(16) char state1[64] = { 0 };
+		alignas(16) char state2[64] = { 0 };
+		hex2bin("6c19536eb2de31b6c0065f7f116e86f960d8af0c57210a6584c3237b9d064dc7", 64, state1);
+		memcpy(state2, state1, sizeof(state1));
+		alignas(16) char out1[128 + 8 * RANDOMX_PROGRAM_SIZE_V2];
+		alignas(16) char out2[128 + 8 * RANDOMX_PROGRAM_SIZE_V1];
+		fillAes4Rx4<true>(state1, sizeof(out1), out1);
+		fillAes4Rx4<true>(state2, sizeof(out2), out2);
+		assert(memcmp(out1, out2, sizeof(out2)) == 0);
 	});
 
 	runTest("rx_cast_vec_f2i / rx_cast_vec_i2f", true, []() {
@@ -918,6 +1001,27 @@ int main() {
 		assert(pc == ibc.target);
 	});
 
+	// RandomX v2 programs have 384 instructions: jump targets and program counters above 255 must work.
+	runTest("CBRANCH (decode/execute) 383 -> 260", RANDOMX_FREQ_CBRANCH > 0 && RANDOMX_PROGRAM_SIZE_V2 > 256, [&] {
+		randomx::Instruction instr;
+		instr.opcode = randomx::ceil_IADD_RS - 1;
+		instr.dst = registerHigh | registerDst;
+		instr.src = registerHigh | registerSrc;
+		instr.mod = 0;
+		instr.setImm32(0);
+		randomx::InstructionByteCode ibcAdd;
+		decoder.compileInstruction(instr, 260, ibcAdd);
+		instr.opcode = randomx::ceil_CBRANCH - 1;
+		instr.setImm32(imm32);
+		instr.mod = 48;
+		decoder.compileInstruction(instr, pc = 383, ibc);
+		assert(ibc.type == randomx::InstructionType::CBRANCH);
+		assert(ibc.target == 260);
+		reg.r[registerDst] = 0xFFFFFFFFFFFC6800;
+		decoder.executeInstruction(ibc, pc, nullptr, config, RANDOMX_FLAG_V2);
+		assert(pc == 260);
+	});
+
 	runTest("CFROUND (decode)", RANDOMX_FREQ_CFROUND > 0, [&] {
 		randomx::Instruction instr;
 		instr.opcode = randomx::ceil_CFROUND - 1;
@@ -927,6 +1031,35 @@ int main() {
 		assert(ibc.type == randomx::InstructionType::CFROUND);
 		assert(ibc.isrc == &reg.r[registerSrc]);
 		assert(ibc.imm == 18);
+	});
+
+	runTest("CFROUND v1 (execute)", RANDOMX_FREQ_CFROUND > 0, [&] {
+		rx_set_rounding_mode(RoundToNearest);
+		reg.r[registerSrc] = (1ULL << 18) | (1ULL << 20); // rotr(src, 18) = 5: bits 0-1 = 01, bit 2 set
+		decoder.executeInstruction(ibc, pc, nullptr, config, RANDOMX_FLAG_DEFAULT);
+		assert(rx_get_rounding_mode() == RoundDown);     // v1: always applied
+		rx_set_rounding_mode(RoundToNearest);
+	});
+
+	// specs.md 5.4.1: in v2 the rounding mode is only changed if bits 2-5 of rotr(src, imm32) are zero
+	runTest("CFROUND v2 gating (execute)", RANDOMX_FREQ_CFROUND > 0, [&] {
+		rx_set_rounding_mode(RoundToNearest);
+		reg.r[registerSrc] = 3ULL << 18;                  // rotr = 3: bits 2-5 clear -> applied
+		decoder.executeInstruction(ibc, pc, nullptr, config, RANDOMX_FLAG_V2);
+		assert(rx_get_rounding_mode() == RoundToZero);
+		reg.r[registerSrc] = (1ULL << 18) | (1ULL << 20); // rotr = 5: bit 2 set -> ignored
+		decoder.executeInstruction(ibc, pc, nullptr, config, RANDOMX_FLAG_V2);
+		assert(rx_get_rounding_mode() == RoundToZero);
+		reg.r[registerSrc] = (2ULL << 18) | (1ULL << 23); // rotr = 34: bit 5 set -> ignored
+		decoder.executeInstruction(ibc, pc, nullptr, config, RANDOMX_FLAG_V2);
+		assert(rx_get_rounding_mode() == RoundToZero);
+		reg.r[registerSrc] = (2ULL << 18) | (1ULL << 24); // rotr = 66: bit 6 is outside the gate -> applied
+		decoder.executeInstruction(ibc, pc, nullptr, config, RANDOMX_FLAG_V2);
+		assert(rx_get_rounding_mode() == RoundUp);
+		reg.r[registerSrc] = (1ULL << 63) | (1ULL << 18); // rotated bit 63 lands on bit 45 -> applied
+		decoder.executeInstruction(ibc, pc, nullptr, config, RANDOMX_FLAG_V2);
+		assert(rx_get_rounding_mode() == RoundDown);
+		rx_set_rounding_mode(RoundToNearest);
 	});
 
 	runTest("ISTORE L1 (decode)", RANDOMX_FREQ_ISTORE > 0, [&] {
@@ -1025,7 +1158,9 @@ int main() {
 
 		char hash[RANDOMX_HASH_SIZE];
 		calcHexHash(key, "1010e1eaf8cf067b37b5f0ee031ab23ed1755e090a3af4415830145853e2be3e1f6821fed84dae58d00e00da5214d6c1f2d0622e0abd51f9373d04e0b0f8e6d6514d90689721c4aac5a9bb0d", &hash);
-		assert(equalsHex(hash, "78af2a1864c42abce36d2e8983e13df99b2af0ce1362999af09fab004d4435a8"));
+		// NOTE: the v2 value is a consistency reference computed with this implementation (interpreter == JIT soft AES == JIT hardware AES
+		// on x86-64); unlike the v1 value it has not been confirmed by an independent implementation.
+		assert(equalsHex(hash, (vm->getFlags() & RANDOMX_FLAG_V2) ? "59a892571444ddfc309f876d620220b83e926395c56f568efeb0358bad7dbdf6" : "78af2a1864c42abce36d2e8983e13df99b2af0ce1362999af09fab004d4435a8"));
 	};
 
 	runTest("Hash test 1a (interpreter)", stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), test_a);
@@ -1056,6 +1191,7 @@ int main() {
 	runTest("Hash test 1c (interpreter v2)", stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), test_c);
 	runTest("Hash test 1d (interpreter v2)", stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), test_d);
 	runTest("Hash test 1e (interpreter v2)", stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), test_e);
+	runTest("Hash test 1f (ISUB_R edge case, interpreter v2)", stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), test_f);
 
 	if (RANDOMX_HAVE_COMPILER) {
 		randomx_release_cache(cache);
@@ -1092,6 +1228,7 @@ int main() {
 	runTest("Hash test 2c (compiler v2)", RANDOMX_HAVE_COMPILER && stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), test_c);
 	runTest("Hash test 2d (compiler v2)", RANDOMX_HAVE_COMPILER && stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), test_d);
 	runTest("Hash test 2e (compiler v2)", RANDOMX_HAVE_COMPILER && stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), test_e);
+	runTest("Hash test 2f (ISUB_R edge case, compiler v2)", RANDOMX_HAVE_COMPILER && stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), test_f);
 
 	auto flags = randomx_get_flags();
 
@@ -1185,6 +1322,12 @@ int main() {
 		assert(rx_get_rounding_mode() == RoundToNearest);
 	});
 
+	runTest("Commitment test (v1)", stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), []() {
+		alignas(16) char hash[RANDOMX_HASH_SIZE];
+		calcStringCommitment("test key 000", "This is a test", &hash);
+		assert(equalsHex(hash, "d53ccf348b75291b7be76f0a7ac8208bbced734b912f6fca60539ab6f86be919"));
+	});
+
 	randomx_destroy_vm(vm);
 	vm = nullptr;
 
@@ -1194,7 +1337,15 @@ int main() {
 	vm = randomx_create_vm(RANDOMX_FLAG_V2, cache, nullptr);
 #endif
 
-	runTest("Commitment test", stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), []() {
+	runTest("Preserve rounding mode (v2)", RANDOMX_FREQ_CFROUND > 0, []() {
+		rx_set_rounding_mode(RoundToNearest);
+		alignas(16) char hash[RANDOMX_HASH_SIZE];
+		calcStringHash("test key 000", "Lorem ipsum dolor sit amet", &hash);
+		assert(equalsHex(hash, hashB_v2));
+		assert(rx_get_rounding_mode() == RoundToNearest);
+	});
+
+	runTest("Commitment test (v2)", stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), []() {
 		alignas(16) char hash[RANDOMX_HASH_SIZE];
 		calcStringCommitment("test key 000", "This is a test", &hash);
 		assert(equalsHex(hash, "133be717399046b03ae82ce8ddd9d1ee4d3ea7fca03a50dec09b6848cbb98e18"));
@@ -1234,10 +1385,39 @@ int main() {
 
 	runTest("Hash test (compiler switch v1 <-> v2)", RANDOMX_HAVE_COMPILER && stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), test_switch);
 
+	runTest("Hash test (compiler hard AES switch v1 <-> v2)", RANDOMX_HAVE_COMPILER && HAVE_AES && randomx::cpu.hasAes() && stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), [&] {
+		initCache("test key 000");
+		randomx_destroy_vm(vm);
+		vm = randomx_create_vm(jitFlags | RANDOMX_FLAG_HARD_AES, cache, nullptr);
+		assert(vm != nullptr);
+		test_switch();
+		randomx_destroy_vm(vm);
+		vm = randomx_create_vm(RANDOMX_FLAG_DEFAULT, cache, nullptr);
+	});
+
+	runTest("Hash test (secure JIT, soft AES)", RANDOMX_HAVE_COMPILER && stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), []() {
+		initCache("test key 000");
+		for (randomx_flags f : { RANDOMX_FLAG_JIT | RANDOMX_FLAG_SECURE, RANDOMX_FLAG_JIT | RANDOMX_FLAG_SECURE | RANDOMX_FLAG_V2 }) {
+			randomx_vm* secureVm = randomx_create_vm(f, cache, nullptr);
+			assert(secureVm != nullptr);
+			checkStandardVectors(secureVm);
+			randomx_destroy_vm(secureVm);
+		}
+	});
+
 	runTest("Hash test (hardware AES)", randomx::cpu.hasAes() && stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), []() {
 		initCache("test key 000");
-		for (randomx_flags f : { RANDOMX_FLAG_HARD_AES, RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_V2 }) {
+		std::vector<randomx_flags> hardFlags = { RANDOMX_FLAG_HARD_AES, RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_V2 };
+		if (RANDOMX_HAVE_COMPILER) {
+			// the JIT compilers emit different main-loop code for hardware and software AES in v2
+			hardFlags.push_back(jitFlags | RANDOMX_FLAG_HARD_AES);
+			hardFlags.push_back(jitFlags | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_V2);
+			hardFlags.push_back(RANDOMX_FLAG_JIT | RANDOMX_FLAG_SECURE | RANDOMX_FLAG_HARD_AES);
+			hardFlags.push_back(RANDOMX_FLAG_JIT | RANDOMX_FLAG_SECURE | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_V2);
+		}
+		for (randomx_flags f : hardFlags) {
 			randomx_vm* hardVm = randomx_create_vm(f, cache, nullptr);
+			assert(hardVm != nullptr || !HAVE_AES);
 			if (hardVm == nullptr)
 				continue;
 			char hash1[RANDOMX_HASH_SIZE], hash2[RANDOMX_HASH_SIZE];
@@ -1252,6 +1432,47 @@ int main() {
 
 	runTest("Hardware AES not supported", !HAVE_AES && !randomx::cpu.hasAes(), []() {
 		assert(randomx_create_vm(RANDOMX_FLAG_HARD_AES, cache, nullptr) == nullptr);
+	});
+
+	// Fast mode (full dataset) is what miners run; it is only tested when RANDOMX_TEST_FULL_MEM is set because
+	// it needs 2080 MiB and about a minute of dataset initialization.
+	runTest("Hash test (full dataset, set RANDOMX_TEST_FULL_MEM=1)", getenv("RANDOMX_TEST_FULL_MEM") != nullptr && stringsEqual(RANDOMX_ARGON_SALT, "RandomX\x03"), []() {
+		randomx_cache* fullCache = randomx_alloc_cache(RANDOMX_HAVE_COMPILER ? RANDOMX_FLAG_JIT : RANDOMX_FLAG_DEFAULT);
+		assert(fullCache != nullptr);
+		randomx_init_cache(fullCache, "test key 000", 12);
+		randomx_dataset* dataset = randomx_alloc_dataset(RANDOMX_FLAG_DEFAULT);
+		assert(dataset != nullptr);
+		const unsigned long itemCount = randomx_dataset_item_count();
+		const unsigned threadCount = 4;
+		std::vector<std::thread> threads;
+		for (unsigned t = 0; t < threadCount; ++t) {
+			const unsigned long start = itemCount * t / threadCount;
+			const unsigned long end = itemCount * (t + 1) / threadCount;
+			threads.emplace_back(randomx_init_dataset, dataset, fullCache, start, end - start);
+		}
+		for (auto& t : threads)
+			t.join();
+		std::vector<randomx_flags> fullFlags = { RANDOMX_FLAG_FULL_MEM, RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_V2 };
+		if (RANDOMX_HAVE_COMPILER) {
+			fullFlags.push_back(RANDOMX_FLAG_FULL_MEM | jitFlags);
+			fullFlags.push_back(RANDOMX_FLAG_FULL_MEM | jitFlags | RANDOMX_FLAG_V2);
+		}
+		if (HAVE_AES && randomx::cpu.hasAes()) {
+			fullFlags.push_back(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_HARD_AES);
+			fullFlags.push_back(RANDOMX_FLAG_FULL_MEM | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_V2);
+			if (RANDOMX_HAVE_COMPILER) {
+				fullFlags.push_back(RANDOMX_FLAG_FULL_MEM | jitFlags | RANDOMX_FLAG_HARD_AES);
+				fullFlags.push_back(RANDOMX_FLAG_FULL_MEM | jitFlags | RANDOMX_FLAG_HARD_AES | RANDOMX_FLAG_V2);
+			}
+		}
+		for (randomx_flags f : fullFlags) {
+			randomx_vm* fullVm = randomx_create_vm(f, nullptr, dataset);
+			assert(fullVm != nullptr);
+			checkStandardVectors(fullVm);
+			randomx_destroy_vm(fullVm);
+		}
+		randomx_release_dataset(dataset);
+		randomx_release_cache(fullCache);
 	});
 
 	if (cache != nullptr)

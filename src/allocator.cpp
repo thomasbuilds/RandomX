@@ -57,7 +57,7 @@ namespace randomx {
 	}
 
 	void LargePageAllocator::freeMemory(void* ptr, size_t count) {
-		freePagedMemory(ptr, count);
+		freeLargePagesMemory(ptr, count);
 	};
 
 }

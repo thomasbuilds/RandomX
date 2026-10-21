@@ -28,6 +28,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "cpu.hpp"
 #include <cstring>
+#include <cstdint>
 
 #if defined(_M_X64) || defined(__x86_64__)
 	#define HAVE_CPUID
@@ -40,6 +41,16 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 			__cpuid_count(InfoType, 0, info[0], info[1], info[2], info[3]);
 		}
 	#endif
+	//XGETBV with ECX = 0 (only valid if CPUID.1:ECX.OSXSAVE is set)
+	static uint64_t xgetbv0() {
+	#if defined(_MSC_VER)
+		return _xgetbv(0);
+	#else
+		uint32_t eax, edx;
+		__asm__ __volatile__("xgetbv" : "=a"(eax), "=d"(edx) : "c"(0));
+		return ((uint64_t)edx << 32) | eax;
+	#endif
+	}
 #endif
 
 #if defined(HAVE_HWCAP)
@@ -79,14 +90,22 @@ namespace randomx {
 		int info[4];
 		cpuid(info, 0);
 		int nIds = info[0];
+		bool avxEnabled = false;
 		if (nIds >= 0x00000001) {
 			cpuid(info, 0x00000001);
 			ssse3_ = (info[2] & (1 << 9)) != 0;
 			aes_ = (info[2] & (1 << 25)) != 0;
+			//AVX/AVX2 can only be used if the OS saves and restores the YMM registers:
+			//CPUID.1:ECX.OSXSAVE[bit 27], CPUID.1:ECX.AVX[bit 28] and XCR0 bits 1-2 (XMM and YMM state)
+			const bool osxsave = (info[2] & (1 << 27)) != 0;
+			const bool avx = (info[2] & (1 << 28)) != 0;
+			if (osxsave && avx) {
+				avxEnabled = (xgetbv0() & 6) == 6;
+			}
 		}
 		if (nIds >= 0x00000007) {
 			cpuid(info, 0x00000007);
-			avx2_ = (info[1] & (1 << 5)) != 0;
+			avx2_ = avxEnabled && (info[1] & (1 << 5)) != 0;
 		}
 #elif defined(__aarch64__)
 	#if defined(HWCAP_AES)

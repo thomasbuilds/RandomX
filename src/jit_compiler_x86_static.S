@@ -172,13 +172,15 @@ rx_dataset_init:
 	push rsi
 	mov rdi, qword ptr [rcx] ;# cache->memory
 	mov rsi, rdx ;# dataset
-	mov rbp, r8  ;# block index
-	push r9      ;# max. block index
+	mov ebp, r8d ;# block index (zero-extended 32-bit argument)
+	mov r9d, r9d ;# max. block index (zero-extended 32-bit argument)
+	push r9
 #else
 	mov rdi, qword ptr [rdi] ;# cache->memory
 	;# dataset in rsi
-	mov rbp, rdx  ;# block index
-	push rcx      ;# max. block index
+	mov ebp, edx  ;# block index (zero-extended 32-bit argument)
+	mov ecx, ecx  ;# max. block index (zero-extended 32-bit argument)
+	push rcx
 #endif
 init_block_loop:
 	prefetchw byte ptr [rsi]
@@ -263,7 +265,9 @@ rx_program_end:
 .balign 64
 DECL(randomx_reciprocal_fast):
 #if !defined(WINABI)
-	mov rcx, rdi
+	mov ecx, edi ;# zero-extended 32-bit argument
+#else
+	mov ecx, ecx ;# zero-extended 32-bit argument
 #endif
 	#include "asm/randomx_reciprocal.inc"
 

@@ -73,7 +73,7 @@ namespace randomx {
 		uint8_t* code;
 		int32_t codePos;
 
-		randomx_flags vmFlags;
+		randomx_flags vmFlags = RANDOMX_FLAG_DEFAULT;
 
 		void generateProgramPrologue(Program&, ProgramConfiguration&);
 		void generateProgramEpilogue(Program&, ProgramConfiguration&);

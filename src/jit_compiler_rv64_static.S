@@ -28,7 +28,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define DECL(x) x
 
+#if defined(__ELF__)
+/* the templates are only read (copied into the JIT buffer), never executed in place */
+.section .rodata
+#else
 .text
+#endif
 .option rvc
 
 #include "configuration.h"

@@ -68,7 +68,7 @@ namespace randomx {
 	private:
 		CompilerState state;
 
-		randomx_flags flags;
+		randomx_flags flags = RANDOMX_FLAG_DEFAULT;
 
 		uint8_t* vectorCode = nullptr;
 		size_t vectorCodeSize = 0;

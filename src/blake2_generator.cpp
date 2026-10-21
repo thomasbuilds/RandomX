@@ -37,7 +37,8 @@ namespace randomx {
 
 	Blake2Generator::Blake2Generator(const void* seed, size_t seedSize, int nonce) : dataIndex(sizeof(data)) {
 		memset(data, 0, sizeof(data));
-		memcpy(data, seed, seedSize > maxSeedSize ? maxSeedSize : seedSize);
+		if (seedSize > 0)
+			memcpy(data, seed, seedSize > maxSeedSize ? maxSeedSize : seedSize);
 		store32(&data[maxSeedSize], nonce);
 	}
 

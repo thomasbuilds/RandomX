@@ -199,7 +199,7 @@ int main(int argc, char** argv) {
 	AtomicHash result;
 	std::vector<randomx_vm*> vms;
 	std::vector<std::thread> threads;
-	randomx_dataset* dataset;
+	randomx_dataset* dataset = nullptr;
 	randomx_cache* cache;
 	randomx_flags flags;
 

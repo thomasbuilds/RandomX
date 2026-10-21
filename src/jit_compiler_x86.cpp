@@ -48,7 +48,7 @@ namespace randomx {
 	; rdx -> temporary
 	; rsi -> scratchpad pointer
 	; rdi -> dataset pointer
-	; rbp -> memory registers "ma" (high 32 bits), "mx" (low 32 bits)
+	; rbp -> memory registers "mx" (high 32 bits), "ma" (low 32 bits) after the prologue
 	; rsp -> stack pointer
 	; r8  -> "r0"
 	; r9  -> "r1"
@@ -179,6 +179,7 @@ namespace randomx {
 	const int32_t loopStoreSize = codeLoopStoreHardAes - codeLoopStore;
 	const int32_t loopStoreHardAesSize = codeLoopStoreSoftAes - codeLoopStoreHardAes;
 	const int32_t loopStoreSoftAesSize = codeLoopEnd - codeLoopStoreSoftAes;
+	constexpr int32_t loopEndSize = 3 + 6 + 5; //sub ebx, 1 / jnz rel32 / jmp rel32
 	const int32_t softAesSize = codeSoftAesEnd - codeSoftAes;
 
 	const int32_t datasetInitSize = codeEpilogue - codeDatasetInit;
@@ -294,6 +295,11 @@ namespace randomx {
 	}
 
 	JitCompilerX86::JitCompilerX86() {
+		//the "call soft_aes_enc/dec" displacements copied from program_loop_store_soft_aes.inc are only valid
+		//if the loop end sequence emitted by generateProgramEpilogue (sub ebx,1 / jnz / jmp) has exactly the
+		//same size as the randomx_program_loop_end template that separates the two blocks in the static code
+		if (codeSoftAes - codeLoopEnd != loopEndSize)
+			throw std::runtime_error("Unexpected JIT template layout");
 		code = (uint8_t*)allocMemoryPages(CodeSize);
 		if (code == nullptr)
 			throw std::runtime_error("allocMemoryPages");

@@ -96,7 +96,7 @@ int main(int argc, char** argv) {
 
 	if (genSuperscalar) {
 		randomx::SuperscalarProgram p;
-		randomx::Blake2Generator gen(seed, nonce);
+		randomx::Blake2Generator gen(seed, sizeof(seed), nonce);
 		randomx::generateSuperscalar(p, gen);
 		randomx::AssemblyGeneratorX86 asmX86;
 		asmX86.generateAsm(p);

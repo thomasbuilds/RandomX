@@ -547,9 +547,18 @@ void* generateProgramVectorRV64(uint8_t* buf, Program& prog, ProgramConfiguratio
 					// mul x20 + dst, x20 + dst, x5
 					emit32(0x025A0A33 + (dst << 7) + (dst << 15));
 				}
-				else {
+				else if (offset < 2048) {
 					// ld x5, offset(x18)
 					emit32(0x00093283 + (offset << 20));
+					// mul x20 + dst, x20 + dst, x5
+					emit32(0x025A0A33 + (dst << 7) + (dst << 15));
+				}
+				else {
+					// The 12-bit immediate of "ld" only reaches 2047: literals 256-383 need a rebased pointer
+					// addi x5, x18, 2040
+					emit32(0x7F890293);
+					// ld x5, (offset - 2040)(x5)
+					emit32(0x0002B283 + ((offset - 2040) << 20));
 					// mul x20 + dst, x20 + dst, x5
 					emit32(0x025A0A33 + (dst << 7) + (dst << 15));
 				}

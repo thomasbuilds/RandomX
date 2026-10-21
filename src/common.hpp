@@ -52,6 +52,8 @@ namespace randomx {
 	static_assert(RANDOMX_PROGRAM_SIZE_V1 <= 32768, "RANDOMX_PROGRAM_SIZE_V1 must not exceed 32768");
 	static_assert(RANDOMX_PROGRAM_SIZE_V2 > 0, "RANDOMX_PROGRAM_SIZE_V2 must be greater than 0");
 	static_assert(RANDOMX_PROGRAM_SIZE_V2 <= 32768, "RANDOMX_PROGRAM_SIZE_V2 must not exceed 32768");
+	static_assert(RANDOMX_PROGRAM_MAX_SIZE >= RANDOMX_PROGRAM_SIZE_V1 && RANDOMX_PROGRAM_MAX_SIZE >= RANDOMX_PROGRAM_SIZE_V2, "RANDOMX_PROGRAM_MAX_SIZE must not be smaller than RANDOMX_PROGRAM_SIZE_V1 and RANDOMX_PROGRAM_SIZE_V2");
+	static_assert(RANDOMX_PROGRAM_SIZE_V1 % 8 == 0 && RANDOMX_PROGRAM_SIZE_V2 % 8 == 0 && RANDOMX_PROGRAM_MAX_SIZE % 8 == 0, "Program sizes must be divisible by 8");
 	static_assert(RANDOMX_PROGRAM_ITERATIONS > 0, "RANDOMX_PROGRAM_ITERATIONS must be greater than 0");
 	static_assert(RANDOMX_PROGRAM_COUNT > 0, "RANDOMX_PROGRAM_COUNT must be greater than 0");
 	static_assert((RANDOMX_SCRATCHPAD_L3 & (RANDOMX_SCRATCHPAD_L3 - 1)) == 0, "RANDOMX_SCRATCHPAD_L3 must be a power of 2.");

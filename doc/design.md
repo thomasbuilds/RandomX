@@ -1,4 +1,6 @@
 # RandomX design
+
+*Note: this document describes the design of RandomX v1. RandomX v2 changes the program size from 256 to 384 instructions, makes `CFROUND` conditional, replaces the XOR mixing of the floating point registers with AES rounds and prefetches Dataset items two iterations ahead; see [design_v2.md](design_v2.md). Figures quoted below (program size, number of Scratchpad accesses per iteration, bytes generated per program) refer to RandomX v1.*
 To minimize the performance advantage of specialized hardware, a proof of work (PoW) algorithm must achieve *device binding* by targeting specific features of existing general-purpose hardware. This is a complex task because we have to target a large class of devices with different architectures from different manufacturers.
 
 There are two distinct classes of general processing devices: central processing units (CPUs) and graphics processing units (GPUs). RandomX targets CPUs for the following reasons:

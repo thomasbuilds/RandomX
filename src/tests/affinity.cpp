@@ -79,6 +79,8 @@ cpuid_from_mask(uint64_t mask, const unsigned &thread_index)
 {
     static unsigned lookup[64];
     static bool init = false;
+    if (thread_index >= 64)
+        return 0;
     if (init)
         return lookup[thread_index];
     unsigned count_found = 0;

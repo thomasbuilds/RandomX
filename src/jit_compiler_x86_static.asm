@@ -169,8 +169,9 @@ randomx_dataset_init PROC
 	push r15
 	mov rdi, qword ptr [rcx] ;# cache->memory
 	mov rsi, rdx ;# dataset
-	mov rbp, r8  ;# block index
-	push r9      ;# max. block index
+	mov ebp, r8d ;# block index (zero-extended 32-bit argument)
+	mov r9d, r9d ;# max. block index (zero-extended 32-bit argument)
+	push r9
 init_block_loop:
 	prefetchw byte ptr [rsi]
 	mov rbx, rbp
@@ -253,6 +254,7 @@ randomx_program_end ENDP
 
 ALIGN 64
 randomx_reciprocal_fast PROC
+	mov ecx, ecx ;# zero-extended 32-bit argument
 	include asm/randomx_reciprocal.inc
 randomx_reciprocal_fast ENDP
 

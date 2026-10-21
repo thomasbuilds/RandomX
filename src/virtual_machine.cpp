@@ -111,6 +111,11 @@ namespace randomx {
 		if (!softAes && !cpu.hasAes())
 			throw std::runtime_error(platformError);
 #else
+#if defined(_M_X64) || defined(__x86_64__) || (defined(__aarch64__) && (defined(HAVE_HWCAP) || defined(__APPLE__)))
+		//hardware AES support can be detected reliably on these platforms: fail gracefully instead of raising SIGILL
+		if (!softAes && !cpu.hasAes())
+			throw std::runtime_error("Platform doesn't support hardware AES");
+#endif
 		if (!softAes) { //if hardware AES is not supported, it's better to fail now than to return a ticking bomb
 			rx_vec_i128 tmp = rx_load_vec_i128((const rx_vec_i128*)&aesDummy);
 			tmp = rx_aesenc_vec_i128(tmp, tmp);

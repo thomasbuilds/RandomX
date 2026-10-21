@@ -54,7 +54,13 @@ extern "C" {
 			flags |= RANDOMX_FLAG_SECURE;
 		}
 #endif
+#ifdef __riscv
+		//RISC-V has no scalar AES instructions (HAVE_AES is 0), but the Zvkned vector AES
+		//implementation is usable whenever the CPU passed the self-test in cpu.cpp
+		if (cpu.hasAes()) {
+#else
 		if (HAVE_AES && cpu.hasAes()) {
+#endif
 			flags |= RANDOMX_FLAG_HARD_AES;
 		}
 		if (randomx_argon2_impl_avx2() != nullptr && cpu.hasAvx2()) {
@@ -198,7 +204,7 @@ extern "C" {
 		assert(startItem + itemCount <= DatasetItemCount);
 
 		if (itemCount < 4) {
-			uint8_t buf[randomx::CacheLineSize * 4];
+			alignas(64) uint8_t buf[randomx::CacheLineSize * 4];
 			cache->datasetInit(cache, buf, startItem, startItem + 4);
 			memcpy(dataset->memory + startItem * randomx::CacheLineSize, buf, itemCount * randomx::CacheLineSize);
 		}
@@ -228,6 +234,11 @@ extern "C" {
 		assert(cache != nullptr || (flags & RANDOMX_FLAG_FULL_MEM));
 		assert(cache == nullptr || cache->isInitialized());
 		assert(dataset != nullptr || !(flags & RANDOMX_FLAG_FULL_MEM));
+
+		//a cache that was never initialized would produce meaningless hashes
+		if (cache != nullptr && !cache->isInitialized()) {
+			return nullptr;
+		}
 
 		randomx_vm *vm = nullptr;
 

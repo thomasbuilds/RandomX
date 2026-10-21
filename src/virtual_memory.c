@@ -243,3 +243,40 @@ void freePagedMemory(void* ptr, size_t bytes) {
 	}
 #endif
 }
+
+#if defined(__linux__)
+#include <stdio.h>
+/* size of the default huge page (the one used by MAP_HUGETLB without a size flag) */
+static size_t getHugePageSize(void) {
+	size_t result = 2 * 1024 * 1024;
+	FILE* f = fopen("/proc/meminfo", "r");
+	if (f != NULL) {
+		char line[256];
+		while (fgets(line, sizeof(line), f) != NULL) {
+			unsigned long kb;
+			if (sscanf(line, "Hugepagesize: %lu kB", &kb) == 1) {
+				if (kb > 0)
+					result = (size_t)kb * 1024;
+				break;
+			}
+		}
+		fclose(f);
+	}
+	return result;
+}
+#endif
+
+void freeLargePagesMemory(void* ptr, size_t bytes) {
+#if defined(_WIN32) || defined(__CYGWIN__)
+	VirtualFree(ptr, 0, MEM_RELEASE);
+#else
+	if (ptr) {
+#if defined(__linux__)
+		/* the kernel rounds the length of a MAP_HUGETLB mapping up to the huge page size and
+		   munmap fails with EINVAL (leaking the mapping) unless the same rounded length is used */
+		bytes = alignSize(bytes, getHugePageSize());
+#endif
+		munmap(ptr, bytes);
+	}
+#endif
+}

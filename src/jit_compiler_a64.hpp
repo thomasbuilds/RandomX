@@ -73,7 +73,7 @@ namespace randomx {
 		uint32_t literalPos;
 		uint32_t num32bitLiterals;
 
-		randomx_flags flags;
+		randomx_flags flags = RANDOMX_FLAG_DEFAULT;
 
 		static void emit32(uint32_t val, uint8_t* code, uint32_t& codePos)
 		{

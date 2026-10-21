@@ -18,9 +18,11 @@ Full specification is available in [specs.md](doc/specs.md).
 
 Design description and analysis is available in [design.md](doc/design.md).
 
+RandomX v2 (2026) changes the VM program size from 256 to 384 instructions, makes the `CFROUND` instruction conditional, mixes the floating point registers with AES rounds and prefetches Dataset items two iterations ahead. It is selected with `RANDOMX_FLAG_V2`; the Cache and the Dataset are identical for both versions. The changes and their rationale are described in [design_v2.md](doc/design_v2.md).
+
 ## Audits
 
-Between May and August 2019, RandomX was audited by 4 independent security research teams:
+Between May and August 2019, RandomX (v1) was audited by 4 independent security research teams:
 
 * [Trail of Bits](https://www.trailofbits.com/) (28 000 USD)
 * [X41 D-SEC](https://www.x41-dsec.de/) (42 000 EUR)
@@ -37,7 +39,7 @@ RandomX is written in C++11 and builds a static library with a C API provided by
 
 ### Linux
 
-Build dependencies: `cmake` (minimum 3.5) and `gcc` (minimum version 4.8, but version 7+ is recommended).
+Build dependencies: `cmake` (minimum 3.10) and `gcc` (minimum version 4.8, but version 7+ is recommended). RISC-V builds require GCC 14+ or Clang 19+ (vector AES intrinsics).
 
 To build optimized binaries for your machine, run:
 ```

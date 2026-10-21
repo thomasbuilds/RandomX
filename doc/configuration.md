@@ -1,6 +1,6 @@
 # RandomX configuration
 
-RandomX has 45 customizable parameters (see table below). We recommend each project using RandomX to select a unique configuration to prevent network attacks from hashpower rental services.
+RandomX has 47 customizable parameters (see table below). We recommend each project using RandomX to select a unique configuration to prevent network attacks from hashpower rental services.
 
 These parameters can be modified in source file [configuration.h](../src/configuration.h).
 
@@ -14,7 +14,9 @@ These parameters can be modified in source file [configuration.h](../src/configu
 |`RANDOMX_SUPERSCALAR_LATENCY`|Target latency for SuperscalarHash (in cycles of the reference CPU)|`170`|
 |`RANDOMX_DATASET_BASE_SIZE`|Dataset base size in bytes|`2147483648`|
 |`RANDOMX_DATASET_EXTRA_SIZE`|Dataset extra size in bytes|`33554368`|
-|`RANDOMX_PROGRAM_SIZE`|The number of instructions in a RandomX program|v1: `256`, v2: `384`|
+|`RANDOMX_PROGRAM_SIZE_V1`|The number of instructions in a RandomX v1 program|`256`|
+|`RANDOMX_PROGRAM_SIZE_V2`|The number of instructions in a RandomX v2 program|`384`|
+|`RANDOMX_PROGRAM_MAX_SIZE`|The size of the program buffer (the larger of the two program sizes)|`384`|
 |`RANDOMX_PROGRAM_ITERATIONS`|The number of iterations per program|`2048`|
 |`RANDOMX_PROGRAM_COUNT`|The number of programs per hash|`8`|
 |`RANDOMX_JUMP_BITS`|Jump condition mask size in bits|`8`|
@@ -107,9 +109,9 @@ Non-negative integer divisible by 64.
 #### Note
 This constant affects the memory requirements in fast mode. Some values are unsafe depending on other parameters. See [Unsafe configurations](#unsafe-configurations).
 
-### RANDOMX_PROGRAM_SIZE
+### RANDOMX_PROGRAM_SIZE_V1, RANDOMX_PROGRAM_SIZE_V2
 
-The number of instructions in a RandomX program.
+The number of instructions in a RandomX v1 program and in a RandomX v2 program, respectively. `RANDOMX_PROGRAM_MAX_SIZE` must be equal to the larger of the two values; it determines the size of the program buffer and of the JIT compiler code buffers.
 
 #### Permitted values
 Positive integers divisible by 8 in the range 8 - 32768 (inclusive).
@@ -236,14 +238,15 @@ Configurations not satisfying this condition are vulnerable to memory-time trade
 
 #### Condition
 ```` 
-(128 + RANDOMX_PROGRAM_SIZE * RANDOMX_FREQ_ISTORE / 256) * (RANDOMX_PROGRAM_COUNT * RANDOMX_PROGRAM_ITERATIONS) >= RANDOMX_SCRATCHPAD_L3
+(128 + RANDOMX_PROGRAM_SIZE_V1 * RANDOMX_FREQ_ISTORE / 256) * (RANDOMX_PROGRAM_COUNT * RANDOMX_PROGRAM_ITERATIONS) >= RANDOMX_SCRATCHPAD_L3
+(128 + RANDOMX_PROGRAM_SIZE_V2 * RANDOMX_FREQ_ISTORE / 256) * (RANDOMX_PROGRAM_COUNT * RANDOMX_PROGRAM_ITERATIONS) >= RANDOMX_SCRATCHPAD_L3
 ```` 
 
 Configurations not satisfying this condition are vulnerable to Scratchpad size optimizations due to low amount of writes.
 
 #### Solutions
 
-* Increase `RANDOMX_PROGRAM_SIZE`, `RANDOMX_FREQ_ISTORE`, `RANDOMX_PROGRAM_COUNT` or `RANDOMX_PROGRAM_ITERATIONS`. 
+* Increase `RANDOMX_PROGRAM_SIZE_V1`/`RANDOMX_PROGRAM_SIZE_V2`, `RANDOMX_FREQ_ISTORE`, `RANDOMX_PROGRAM_COUNT` or `RANDOMX_PROGRAM_ITERATIONS`. 
 * Decrease `RANDOMX_SCRATCHPAD_L3`.
 
 ### 3. Program filtering strategies

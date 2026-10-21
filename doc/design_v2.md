@@ -28,7 +28,7 @@ RandomX v1 prefetches data from the dataset one iteration ahead. RandomX v2 incr
 
 This change complements the program size increase tweak and has the same purpose.
 
-## 4. Performance impact
+## 5. Performance impact
 
 Tests show that RandomX v2, while being more than 1.5 times "heavier" than RandomX v1, results in only a slight hashrate reduction but massive efficiency improvements (in terms of VM+AES instructions per Joule):
 

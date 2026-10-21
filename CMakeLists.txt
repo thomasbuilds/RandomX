@@ -362,6 +362,9 @@ if(NOT Threads_FOUND AND UNIX AND NOT APPLE)
   find_package(Threads)
 endif()
 
+target_link_libraries(randomx-tests
+  PRIVATE ${CMAKE_THREAD_LIBS_INIT})
+
 add_executable(randomx-benchmark
   src/tests/benchmark.cpp
   src/tests/affinity.cpp)

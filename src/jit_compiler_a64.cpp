@@ -705,7 +705,7 @@ void JitCompilerA64::h_IMUL_M(Instruction& instr, uint32_t& codePos)
 	constexpr uint32_t tmp_reg = 20;
 	emitMemLoad<tmp_reg>(dst, src, instr, code, k);
 
-	// sub dst, dst, tmp_reg
+	// mul dst, dst, tmp_reg
 	emit32(ARMV8A::MUL | dst | (dst << 5) | (tmp_reg << 16), code, k);
 
 	reg_changed_offset[instr.dst] = k;

@@ -120,7 +120,7 @@
 # v28 -> temporary
 # v29 -> E 'and' mask = 0x00ffffffffc0000000ffffffffc00000
 # v30 -> E 'or' mask  = 0x3*00000000******3*00000000******
-# v31 -> scale mask   = 0x81f000000000000081f0000000000000
+# v31 -> scale mask   = 0x80f000000000000080f0000000000000
 
 	.balign 4
 DECL(randomx_program_aarch64):
@@ -360,6 +360,7 @@ rx_program_xor_with_dataset_line:
 	eor	x15, x15, x19
 
 DECL(randomx_program_aarch64_update_spMix1):
+rx_program_update_spMix1:
 	# JIT compiler will replace it with "eor x10, config.readReg0, config.readReg1"
 	eor	x10, x0, x0
 
@@ -529,12 +530,26 @@ DECL(randomx_program_aarch64_light_dataset_offset):
 
 	bl	rx_calc_dataset_item
 
-	mov	x10, sp
+	# xor integer registers with the dataset item while it is still inside this stack frame
+	# (AAPCS64 has no red zone: memory below sp can be overwritten by a signal frame at any time)
+	ldp	x20, x19, [sp]
+	eor	x4, x4, x20
+	eor	x5, x5, x19
+	ldp	x20, x19, [sp, 16]
+	eor	x6, x6, x20
+	eor	x7, x7, x19
+	ldp	x20, x19, [sp, 32]
+	eor	x12, x12, x20
+	eor	x13, x13, x19
+	ldp	x20, x19, [sp, 48]
+	eor	x14, x14, x20
+	eor	x15, x15, x19
+
 	ldp	x0, x1, [sp, 64]
 	ldp	x2, x30, [sp, 80]
 	add	sp, sp, 96
 
-	b	rx_program_xor_with_dataset_line
+	b	rx_program_update_spMix1
 
 DECL(randomx_program_aarch64_vm_instructions_end_v1):
 	lsr	x10, x9, 32

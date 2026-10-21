@@ -13,4 +13,4 @@
 	ror rbp, 32                        ;# swap "ma" and "mx"
 	xor rbp, rax                       ;# modify "mx"
 	;# add ebx, datasetOffset / 64
-	;# call 32768
+	;# call 16384

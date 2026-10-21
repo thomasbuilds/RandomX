@@ -49,7 +49,7 @@ typedef enum {
   RANDOMX_FLAG_ARGON2_SSSE3 = 32,
   RANDOMX_FLAG_ARGON2_AVX2 = 64,
   RANDOMX_FLAG_ARGON2 = 96,
-  RANDOMX_FLAG_V2 = 128,
+  RANDOMX_FLAG_V2 = 128, /* use the RandomX v2 algorithm (see doc/design_v2.md); only affects randomx_create_vm */
 } randomx_flags;
 
 typedef struct randomx_dataset randomx_dataset;
@@ -84,8 +84,11 @@ extern "C" {
  *            RANDOMX_FLAG_LARGE_PAGES
  *            RANDOMX_FLAG_FULL_MEM
  *            RANDOMX_FLAG_SECURE
+ *            RANDOMX_FLAG_V2
  *         These flags must be added manually if desired.
- *         On OpenBSD RANDOMX_FLAG_SECURE is enabled by default in JIT mode as W^X is enforced by the OS.
+ *         On OpenBSD, NetBSD and macOS/arm64, RANDOMX_FLAG_SECURE is enabled by default in JIT mode
+ *         as W^X is enforced by the OS (a JIT virtual machine created without RANDOMX_FLAG_SECURE
+ *         is not usable on these platforms).
  */
 RANDOMX_EXPORT randomx_flags randomx_get_flags(void);
 
@@ -116,7 +119,11 @@ RANDOMX_EXPORT randomx_cache *randomx_alloc_cache(randomx_flags flags);
  *
  * @param cache is a pointer to a previously allocated randomx_cache structure. Must not be NULL.
  * @param key is a pointer to memory which contains the key value. Must not be NULL.
- * @param keySize is the number of bytes of the key.
+ * @param keySize is the number of bytes of the key. The maximum supported key size is 60 bytes;
+ *        only the first 60 bytes of a longer key are used by the SuperscalarHash generator.
+ *
+ * Note: if the cache was allocated with RANDOMX_FLAG_JIT and the JIT memory pages cannot be
+ *       made writable or executable, this function throws std::runtime_error.
 */
 RANDOMX_EXPORT void randomx_init_cache(randomx_cache *cache, const void *key, size_t keySize);
 
@@ -188,13 +195,16 @@ RANDOMX_EXPORT void randomx_release_dataset(randomx_dataset *dataset);
 /**
  * Creates and initializes a RandomX virtual machine.
  *
- * @param flags is any combination of these 5 flags (each flag can be set or not set):
+ * @param flags is any combination of these 6 flags (each flag can be set or not set):
  *        RANDOMX_FLAG_LARGE_PAGES - allocate scratchpad memory in large pages
  *        RANDOMX_FLAG_HARD_AES - virtual machine will use hardware accelerated AES
  *        RANDOMX_FLAG_FULL_MEM - virtual machine will use the full dataset
  *        RANDOMX_FLAG_JIT - virtual machine will use a JIT compiler
  *        RANDOMX_FLAG_SECURE - when combined with RANDOMX_FLAG_JIT, the JIT pages are never
  *                              writable and executable at the same time (W^X policy)
+ *        RANDOMX_FLAG_V2 - virtual machine will calculate RandomX v2 hashes (without this flag,
+ *                          RandomX v1 hashes are calculated). The cache and the dataset are
+ *                          identical for both versions and can be shared by v1 and v2 machines.
  *        The numeric values of the first 4 flags are ordered so that a higher value will provide
  *        faster hash calculation and a lower numeric value will provide higher portability.
  *        Using RANDOMX_FLAG_DEFAULT (all flags not set) works on all platforms, but is the slowest.
@@ -209,6 +219,7 @@ RANDOMX_EXPORT void randomx_release_dataset(randomx_dataset *dataset);
  *         (2) The requested initialization flags are not supported on the current platform.
  *         (3) cache parameter is NULL and RANDOMX_FLAG_FULL_MEM is not set
  *         (4) dataset parameter is NULL and RANDOMX_FLAG_FULL_MEM is set
+ *         (5) cache parameter is not NULL and the cache has not been initialized
 */
 RANDOMX_EXPORT randomx_vm *randomx_create_vm(randomx_flags flags, randomx_cache *cache, randomx_dataset *dataset);
 
@@ -220,6 +231,9 @@ RANDOMX_EXPORT randomx_vm *randomx_create_vm(randomx_flags flags, randomx_cache 
  * @param machine is a pointer to a randomx_vm structure that was initialized
  *        without RANDOMX_FLAG_FULL_MEM. Must not be NULL.
  * @param cache is a pointer to an initialized randomx_cache structure. Must not be NULL.
+ *
+ * Note: for a machine created with RANDOMX_FLAG_JIT | RANDOMX_FLAG_SECURE, this function throws
+ *       std::runtime_error if the JIT memory pages cannot be made writable or executable.
 */
 RANDOMX_EXPORT void randomx_vm_set_cache(randomx_vm *machine, randomx_cache* cache);
 
@@ -247,6 +261,10 @@ RANDOMX_EXPORT void randomx_destroy_vm(randomx_vm *machine);
  * @param inputSize is the number of bytes to be hashed.
  * @param output is a pointer to memory where the hash will be stored. Must not
  *        be NULL and at least RANDOMX_HASH_SIZE bytes must be available for writing.
+ *
+ * Note: for a machine created with RANDOMX_FLAG_JIT | RANDOMX_FLAG_SECURE, this function (and the
+ *       randomx_calculate_hash_first/next/last functions) throws std::runtime_error if the JIT
+ *       memory pages cannot be made writable or executable.
 */
 RANDOMX_EXPORT void randomx_calculate_hash(randomx_vm *machine, const void *input, size_t inputSize, void *output);
 

@@ -93,7 +93,7 @@ The algorithm consists of the following steps:
 1. The Scratchpad is filled with `RANDOMX_SCRATCHPAD_L3` random bytes using generator `gen1`.
 1. Let `gen4 = AesGenerator4R(gen1.state)` (use the final state of `gen1`).
 1. The value of the VM register `fprc` is set to 0 (default rounding mode - chapter 4.3).
-1. The VM is programmed using `128 + 8 * RANDOMX_PROGRAM_SIZE` random bytes using generator `gen4` (chapter 4.5).
+1. The VM is programmed using `128 + 8 * RANDOMX_PROGRAM_SIZE` random bytes using generator `gen4` (chapter 4.5). Implementations may generate more bytes than needed (for example `128 + 8 * 384` bytes for both RandomX v1 and v2); only the first `128 + 8 * RANDOMX_PROGRAM_SIZE` bytes are used and the extra output has no effect because the generator state is replaced in step 10.
 1. The VM is executed (chapter 4.6).
 1. A new 64-byte seed is calculated as `S = Hash512(RegisterFile)`.
 1. Set `gen4.state = S` (modify the state of the generator).
@@ -328,11 +328,11 @@ Integer registers `r0`-`r7` can be the source or the destination operands of int
 
 Floating point registers `a0`-`a3` are read-only and their value is fixed for a given VM program. They can be the source operand of any floating point instruction. The value of these registers is restricted to the interval `[1, 4294967296)`.
 
-Floating point registers `f0`-`f3` are the "additive" registers, which can be the destination of floating point addition and subtraction instructions. The absolute value of these registers will not exceed about `3.0e+14`.
+Floating point registers `f0`-`f3` are the "additive" registers, which can be the destination of floating point addition and subtraction instructions. The absolute value of these registers will not exceed about `3.0e+14` while the instructions of a program are being executed (in RandomX v2, the registers hold arbitrary 128-bit values after step 10 of chapter 4.6.2 until they are reloaded in step 3 of the next iteration).
 
 Floating point registers `e0`-`e3` are the "multiplicative" registers, which can be the destination of floating point multiplication, division and square root instructions. Their value is always positive.
 
-`ma` and `mx` are the memory registers. Both are 32 bits wide. `ma` contains the memory address of the next Dataset read and `mp` contains the address of the next Dataset prefetch. The values of `ma` and `mx` registers are always aligned to be a multiple of 64.
+`ma` and `mx` are the memory registers. Both are 32 bits wide. `ma` contains the memory address of the next Dataset read. In each loop iteration, one of the two registers (`mp`, which is `mx` in RandomX v1 and `ma` in RandomX v2) is XORed with register data to form the address of the next Dataset prefetch (step 5 of chapter 4.6.2) and the two registers are then swapped (step 8). In RandomX v1, the item prefetched in an iteration is read in the next iteration; in RandomX v2, it is read two iterations later. `mt` is a temporary register that holds the value of `ma` captured in step 5. Dataset addresses are always aligned to a multiple of 64 bytes: whenever `ma`, `mx` or `mp` is used as an address, the register value is ANDed with `(RANDOMX_DATASET_BASE_SIZE - 1) & ~63`. The reference implementation keeps the full 32-bit values in the registers and applies this mask only when the registers are used as addresses; this is equivalent to keeping the registers aligned because the low 6 bits never affect the result.
 
 The 2-bit `fprc` register determines the rounding mode of all floating point operations according to Table 4.3.1. The four rounding modes are defined by the IEEE 754 standard.
 
@@ -448,16 +448,16 @@ The loop described below is repeated until the value of the `ic` register reache
 
 1. XOR of registers `readReg0` and `readReg1` (see Table 4.5.3) is calculated and `spAddr0` is XORed with the low 32 bits of the result and `spAddr1` with the high 32 bits.
 2. `spAddr0` is used to perform a 64-byte aligned read from Scratchpad level 3 (using mask from Table 4.2.1). The 64 bytes are XORed with all integer registers in order `r0`-`r7`.
-3. `spAddr1` is used to perform a 64-byte aligned read from Scratchpad level 3 (using mask from Table 4.2.1). Each floating point register `f0`-`f3` and `e0`-`e3` is initialized using an 8-byte value according to the conversion rules from chapters 4.3.1 and 4.3.2.
+3. `spAddr1` is used to perform a 64-byte aligned read from Scratchpad level 3 (using mask from Table 4.2.1). Each floating point register `f0`-`f3` and `e0`-`e3` is initialized using an 8-byte value according to the conversion rules from chapters 4.3.1 and 4.3.2. Registers `f0`-`f3` are initialized from the 8-byte values at offsets 0, 8, 16 and 24 of the 64-byte block and registers `e0`-`e3` from the values at offsets 32, 40, 48 and 56.
 4. The 256 (384 in v2) instructions stored in the Program Buffer are executed.
 5. The value of `ma` is saved in `mt`. Then the `mp` register is XORed with the low 32 bits of registers `readReg2` and `readReg3` (see Table 4.5.3).
-6. A 64-byte Dataset item at address `datasetOffset + mp % RANDOMX_DATASET_BASE_SIZE` is prefetched from the Dataset (it will be used during the next iteration(s)).
+6. A 64-byte Dataset item at address `datasetOffset + mp % RANDOMX_DATASET_BASE_SIZE` is prefetched from the Dataset (RandomX v1: it will be read in the next iteration; RandomX v2: it will be read in the iteration after the next one).
 7. A 64-byte Dataset item at address `datasetOffset + mt % RANDOMX_DATASET_BASE_SIZE` is loaded from the Dataset. The 64 bytes are XORed with all integer registers in order `r0`-`r7`.
 8. The values of registers `mx` and `ma` are swapped.
 9. The values of all integer registers `r0`-`r7` are written to the Scratchpad (L3) at address `spAddr1` (64-byte aligned).
 10. Group F registers are mixed with group E registers.
 - **RandomX v1:** `fi = fi XOR ei` for i = 0,1,2,3
-- **RandomX v2:** `f0 = AES encrypt of f0 with e0 as key`,`f1 = AES decrypt of f1 with e0 as key`,`f2 = AES encrypt of f2 with e0 as key`,`f3 = AES decrypt of f3 with e0 as key`. These steps are repeated with `e1`,`e2`,`e3` as keys.
+- **RandomX v2:** for `i = 0, 1, 2, 3` (in this order): `f0 = AesEncRound(f0, ei)`, `f1 = AesDecRound(f1, ei)`, `f2 = AesEncRound(f2, ei)`, `f3 = AesDecRound(f3, ei)`, where `AesEncRound` and `AesDecRound` are the single AES encryption and decryption rounds defined in chapter 3.1 (the same operations as the x86 `AESENC` and `AESDEC` instructions). The 16-byte AES state is the little-endian byte image of the F register (bytes 0-7 are the lower half, bytes 8-15 the upper half) and the round key is the little-endian byte image of the E register. The result is written back to the F register as a raw 128-bit value; it is not interpreted as a pair of floating point numbers until the register is reloaded in step 3 of the next iteration or hashed as part of the Register File.
 11. The values of registers `f0`-`f3` are written to the Scratchpad (L3) at address `spAddr0` (64-byte aligned).
 12. `spAddr0` and `spAddr1` are both set to zero.
 13. `ic` is decreased by 1.
