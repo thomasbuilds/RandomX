@@ -302,11 +302,11 @@ All Dataset accesses read one CPU cache line (64 bytes) and are fully prefetched
 
 #### 2.9.1 Cache
 
-The Cache, which is used for light verification and Dataset construction, is about 8 times smaller than the Dataset. To keep a constant area-time product, each Dataset item is constructed from 8 random Cache accesses.
+The Cache, which is used for light verification and Dataset construction, is about 8 times smaller than the Dataset. To keep a constant area-time product, each Dataset item is constructed from 8 Cache accesses (the first one at a position given by the item number, the other 7 at data-dependent positions).
 
 Because 256 MiB is small enough to be included on-chip, RandomX uses a custom high-latency, high-power mixing function ("SuperscalarHash") which defeats the benefits of using low-latency memory and the energy required to calculate SuperscalarHash makes light mode very inefficient for mining (see chapter 3.4).
 
-Using less than 256 MiB of memory is not possible due to the use of tradeoff-resistant Argon2d with 3 iterations. When using 3 iterations (passes), halving the memory usage increases computational cost 3423 times for the best tradeoff attack [[27](https://eprint.iacr.org/2015/430.pdf)].
+Using less than 256 MiB of memory is not practical due to the use of tradeoff-resistant Argon2d with 3 iterations. RandomX needs random access to the final contents of the Cache, and Argon2 version 0x13 XORs each block computed in the second and later passes into the block at the same position from the previous pass, so a block that is not stored can only be recomputed from a large part of the computation graph. Measured on the Cache of the reference implementation, recomputing one missing block costs about 430,000 block compressions on average, more than half of the 786,430 compressions of a complete Cache initialization, even when only 1/64 of the blocks are not stored. (Earlier versions of this document cited a cost increase of 3423 times for halving the memory with 3 passes [[27](https://eprint.iacr.org/2015/430.pdf)]; that figure is not given in the documentation of Argon2 version 0x13, which RandomX uses.)
 
 ## 3. Custom functions
 

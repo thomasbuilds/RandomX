@@ -30,7 +30,9 @@ This change complements the program size increase tweak and has the same purpose
 
 ## 5. Performance impact
 
-Tests show that RandomX v2, while being more than 1.5 times "heavier" than RandomX v1, results in only a slight hashrate reduction but massive efficiency improvements (in terms of VM+AES instructions per Joule):
+Tests show that RandomX v2, while being more than 1.5 times "heavier" than RandomX v1, results in only a slight hashrate reduction but massive efficiency improvements (in terms of VM+AES instructions per Joule).
+
+The VM+AES columns count VM instructions and AES rounds: about 4,456,448 per hash for RandomX v1 and 6,815,744 for RandomX v2, a factor of 1.53. "Relative work/Joule" is therefore the ratio of the Hash/Joule values multiplied by 1.53; the energy needed per hash is compared directly by the Hash/Joule column. The power figures are CPU package power reported by monitoring software (HWInfo64) or nominal package power limits, not power measured at the wall.
 
 ### AMD Ryzen 9 9950X (Zen 5) @ 285W (PBO max)
 |Algorithm|Hashrate|Relative speed|Hash/Joule|VM+AES/s|VM+AES/Joule|Relative work/Joule|

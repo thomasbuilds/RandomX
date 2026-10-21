@@ -31,7 +31,7 @@ RandomX is a proof of work (PoW) algorithm which was designed to close the gap b
 
 **BlakeGenerator** refers to a custom pseudo-random number generator described in chapter 3.5. It's based on the Blake2b hashing function.
 
-**SuperscalarHash** refers to a custom diffusion function designed to run efficiently on superscalar CPUs (see chapter 7). It transforms a 64-byte input value into a 64-byte output value.
+**SuperscalarHash** refers to a custom diffusion function designed to run efficiently on superscalar CPUs (see chapter 6). It transforms a 64-byte input value into a 64-byte output value.
 
 **Virtual Machine** or **VM** refers to the RandomX virtual machine as described in chapter 4.
 
@@ -92,7 +92,7 @@ The algorithm consists of the following steps:
 1. Let `gen1 = AesGenerator1R(S)`.
 1. The Scratchpad is filled with `RANDOMX_SCRATCHPAD_L3` random bytes using generator `gen1`.
 1. Let `gen4 = AesGenerator4R(gen1.state)` (use the final state of `gen1`).
-1. The value of the VM register `fprc` is set to 0 (default rounding mode - chapter 4.3).
+1. The value of the VM register `fprc` is set to 0 (default rounding mode - chapter 4.3). This is done only once per hash: each subsequent program starts with the value of `fprc` left by the previous program.
 1. The VM is programmed using `128 + 8 * RANDOMX_PROGRAM_SIZE` random bytes using generator `gen4` (chapter 4.5). Implementations may generate more bytes than needed (for example `128 + 8 * 384` bytes for both RandomX v1 and v2); only the first `128 + 8 * RANDOMX_PROGRAM_SIZE` bytes are used and the extra output has no effect because the generator state is replaced in step 10.
 1. The VM is executed (chapter 4.6).
 1. A new 64-byte seed is calculated as `S = Hash512(RegisterFile)`.
@@ -127,6 +127,12 @@ The input of the `Hash256` function in step 14 is the following 256 bytes:
  |      AesHash1R(Scratchpad)      | (64 bytes)
  +---------------------------------+
 ```
+
+### 2.1 Commitment
+
+The commitment `C` of an input `H` and its result `R` (step 14) is calculated as `C = Hash256(H || R)`: Hash256 of the bytes of `H` followed by the 32 bytes of `R`. The formula is the same for RandomX v1 and v2 (only `R` depends on the version).
+
+The commitment is not a proof of work by itself: anyone can calculate `C` for any claimed `R`, so a verifier that uses `C` (for example as the value compared with a difficulty target) must also verify `R` by calculating RandomX with the key `K` and the input `H`. When `R` is transmitted together with `H`, a candidate whose commitment does not meet the target can be rejected with a single Hash256 calculation, before the much more expensive RandomX calculation. Implementations that calculate results in a pipeline (for example the reference API functions `randomx_calculate_hash_first`/`next`/`last`, which return the result of the previous input) must pair each result with the input that produced it.
 
 ## 3 Custom functions
 
@@ -275,11 +281,11 @@ BlakeGenerator is a simple pseudo-random number generator based on the Blake2b h
 
 #### 3.5.1 Initialization
 
-The internal state is initialized from a seed value `K` (0-60 bytes long). The seed value is written into the internal state and padded with zeroes. Then the internal state is initialized as `S = Hash512(S)`.
+The internal state is initialized from a seed value `K` (0-60 bytes long): bytes 0-59 of `S` contain `K` padded with zero bytes and bytes 60-63 contain the little-endian 32-bit value 0. The length of `K` is not encoded, so seeds that differ only in trailing zero bytes produce the same output. Then the internal state is initialized as `S = Hash512(S)`.
 
 #### 3.5.2 Random number generation
 
-The generator can generate 1 byte or 4 bytes at a time by supplying data from its internal state `S`. If there are not enough unused bytes left, the internal state is reinitialized as `S = Hash512(S)`.
+The generator can generate 1 byte (`getByte`) or 4 bytes (`getUInt32`, read as a little-endian unsigned 32-bit integer) at a time by supplying the next unused bytes of its internal state `S`, starting with byte 0 after each (re)initialization. If fewer unused bytes are left than requested, the remaining bytes are discarded and the internal state is reinitialized as `S = Hash512(S)` before the value is taken.
 
 ## 4. Virtual Machine
 
@@ -328,7 +334,7 @@ Integer registers `r0`-`r7` can be the source or the destination operands of int
 
 Floating point registers `a0`-`a3` are read-only and their value is fixed for a given VM program. They can be the source operand of any floating point instruction. The value of these registers is restricted to the interval `[1, 4294967296)`.
 
-Floating point registers `f0`-`f3` are the "additive" registers, which can be the destination of floating point addition and subtraction instructions. The absolute value of these registers will not exceed about `3.0e+14` while the instructions of a program are being executed (in RandomX v2, the registers hold arbitrary 128-bit values after step 10 of chapter 4.6.2 until they are reloaded in step 3 of the next iteration).
+Floating point registers `f0`-`f3` are the "additive" registers, which can be the destination of floating point addition and subtraction instructions. The absolute value of these registers will not exceed about `3.0e+14` while the instructions of a program are being executed. After the mixing in step 10 of chapter 4.6.2 (in RandomX v1 and v2), the registers hold arbitrary 128-bit values that are not interpreted as floating point numbers: they are written to the Scratchpad (step 11), hashed as part of the Register File after the last iteration, and replaced by the values loaded in step 3 of the next iteration.
 
 Floating point registers `e0`-`e3` are the "multiplicative" registers, which can be the destination of floating point multiplication, division and square root instructions. Their value is always positive.
 
@@ -347,7 +353,7 @@ The 2-bit `fprc` register determines the rounding mode of all floating point ope
 
 #### 4.3.1 Group F register conversion
 
-When an 8-byte value read from the memory is to be converted to an F group register value or operand, it is interpreted as a pair of 32-bit signed integers (in little endian, two's complement format) and converted to floating point format. This conversion is exact and doesn't need rounding because only 30 bits of the fraction significand are needed to represent the integer value.
+When an 8-byte value read from the memory is to be converted to an F group register value or operand, it is interpreted as a pair of 32-bit signed integers (in little endian, two's complement format) and converted to floating point format. This conversion is exact and doesn't need rounding because only 30 bits of the fraction significand are needed to represent the integer value. The integer in bytes 0-3 is converted into the lower half of the register and the integer in bytes 4-7 into the upper half.
 
 #### 4.3.2 Group E register conversion
 
@@ -457,7 +463,7 @@ The loop described below is repeated until the value of the `ic` register reache
 9. The values of all integer registers `r0`-`r7` are written to the Scratchpad (L3) at address `spAddr1` (64-byte aligned).
 10. Group F registers are mixed with group E registers.
 - **RandomX v1:** `fi = fi XOR ei` for i = 0,1,2,3
-- **RandomX v2:** for `i = 0, 1, 2, 3` (in this order): `f0 = AesEncRound(f0, ei)`, `f1 = AesDecRound(f1, ei)`, `f2 = AesEncRound(f2, ei)`, `f3 = AesDecRound(f3, ei)`, where `AesEncRound` and `AesDecRound` are the single AES encryption and decryption rounds defined in chapter 3.1 (the same operations as the x86 `AESENC` and `AESDEC` instructions). The 16-byte AES state is the little-endian byte image of the F register (bytes 0-7 are the lower half, bytes 8-15 the upper half) and the round key is the little-endian byte image of the E register. The result is written back to the F register as a raw 128-bit value; it is not interpreted as a pair of floating point numbers until the register is reloaded in step 3 of the next iteration or hashed as part of the Register File.
+- **RandomX v2:** for `i = 0, 1, 2, 3` (in this order): `f0 = AesEncRound(f0, ei)`, `f1 = AesDecRound(f1, ei)`, `f2 = AesEncRound(f2, ei)`, `f3 = AesDecRound(f3, ei)`, where `AesEncRound` and `AesDecRound` are the single AES encryption and decryption rounds defined in chapter 3.1 (the same operations as the x86 `AESENC` and `AESDEC` instructions). The 16-byte AES state is the little-endian byte image of the F register (bytes 0-7 are the lower half, bytes 8-15 the upper half) and the round key is the little-endian byte image of the E register. The result is written back to the F register as a raw 128-bit value, which is not interpreted as a pair of floating point numbers (see chapter 4.3).
 11. The values of registers `f0`-`f3` are written to the Scratchpad (L3) at address `spAddr0` (64-byte aligned).
 12. `spAddr0` and `spAddr1` are both set to zero.
 13. `ic` is decreased by 1.
@@ -469,7 +475,7 @@ The VM executes programs in a special instruction set, which was designed in suc
 
 ### 5.1 Instruction encoding
 
-Each instruction word is 64 bits long. Instruction fields are encoded as shown in Fig. 5.1.
+Each instruction word is 64 bits (8 bytes) long: byte 0 is `opcode`, byte 1 is `dst`, byte 2 is `src`, byte 3 is `mod` and bytes 4-7 are `imm32` (a little-endian 32-bit value). Fig. 5.1 illustrates the encoding.
 
 *Figure 5.1 - Instruction encoding*
 
@@ -489,6 +495,24 @@ There are 256 opcodes, which are distributed between 29 distinct instructions. E
 ||**29**|**256**|**100%**
 
 All instructions are described below in chapters 5.2 - 5.5.
+
+Opcodes are assigned to instructions in contiguous ranges, in the order in which the instructions are listed in Tables 5.2.1, 5.3.1, 5.4.1 and 5.5.1; each instruction receives as many consecutive opcodes as the numerator of its frequency. With the default frequencies:
+
+*Table 5.1.1b: Opcode ranges*
+
+|opcodes|instruction|opcodes|instruction|opcodes|instruction|
+|-|-|-|-|-|-|
+|0-15|IADD_RS|84-85|INEG_R|166-171|FSCAL_R|
+|16-22|IADD_M|86-100|IXOR_R|172-203|FMUL_R|
+|23-38|ISUB_R|101-105|IXOR_M|204-207|FDIV_M|
+|39-45|ISUB_M|106-113|IROR_R|208-213|FSQRT_R|
+|46-61|IMUL_R|114-115|IROL_R|214-238|CBRANCH|
+|62-65|IMUL_M|116-119|ISWAP_R|239|CFROUND|
+|66-69|IMULH_R|120-123|FSWAP_R|240-255|ISTORE|
+|70|IMULH_M|124-139|FADD_R|||
+|71-74|ISMULH_R|140-144|FADD_M|||
+|75|ISMULH_M|145-160|FSUB_R|||
+|76-83|IMUL_RCP|161-165|FSUB_M|||
 
 #### 5.1.2 dst
 Destination register. Only bits 0-1 (register groups A, F, E) or 0-2 (groups R, F+E) are used to encode a register according to Table 5.1.2.
@@ -528,16 +552,16 @@ The `mod` flag is encoded as:
 
 The `mod.mem` flag selects between Scratchpad levels L1 and L2 when reading from or writing to memory except for two cases:
 
-* it's a memory read and `dst` and `src` encode the same register
-* it's a memory write `mod.cond` is 14 or 15
+* it's a memory read by an integer instruction (IADD_M, ISUB_M, IMUL_M, IMULH_M, ISMULH_M, IXOR_M) and `dst` and `src` encode the same register
+* it's a memory write and `mod.cond` is 14 or 15
 
-In these two cases, the Scratchpad level is L3 (see Table 5.1.4).
+In these two cases, the Scratchpad level is L3 (see Table 5.1.4). Floating point instructions with a memory operand (FADD_M, FSUB_M, FDIV_M) always use L1 or L2 according to `mod.mem`, even if `dst` and `src` have the same index.
 
 *Table 5.1.4: memory access Scratchpad level*
 
 |condition|Scratchpad level|
 |---------|-|
-|`src == dst` (read)|L3|
+|`src == dst` (integer read)|L3|
 |`mod.cond >= 14` (write)|L3|
 |`mod.mem == 0`|L2|
 |`mod.mem != 0`|L1|
@@ -607,7 +631,7 @@ Performs two's complement negation of the destination register.
 #### 5.2.9 IROR_R, IROL_R
 Performs a cyclic shift (rotation) of the destination register. Source operand (shift count) is implicitly masked to 6 bits. IROR rotates bits right, IROL left.
 
-#### 5.2.9 ISWAP_R
+#### 5.2.10 ISWAP_R
 This instruction swaps the values of two registers. If source and destination refer to the same register, the result is a no-op.
 
 ### 5.3 Floating point instructions
@@ -683,7 +707,7 @@ This sets the rounding mode of all subsequent floating point instructions.
 
 This instruction adds an immediate value `cimm` (constructed from `imm32`, see below) to the destination register and then performs a conditional jump in the Program Buffer based on the value of the destination register. The target of the jump is the instruction following the instruction when register `dst` was last modified.
 
-At the beginning of each program iteration, all registers are considered to be unmodified. A register is considered as modified by an instruction in the following cases:
+The jump target of each CBRANCH instruction is determined once, when the program is loaded, by scanning the Program Buffer in program order starting from the first instruction with all registers considered unmodified. It does not depend on which instructions are executed at runtime; in particular, a CBRANCH instruction can jump twice in a row. A register is considered as modified by an instruction in the following cases:
 
 * It is the destination register of an integer instruction except IMUL_RCP and ISWAP_R.
 * It is the destination register of IMUL_RCP and `imm32` is not zero or a power of 2.
@@ -710,7 +734,7 @@ cimm = SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSMMMMMMMMMMMMMMMMMMMMM10MMMMMMMMM
 
 The second line uses `X` to mark bits of `dst` that will be checked by the condition. If all these bits are 0 after adding `cimm`, the jump is executed.
 
-The construction of the CBRANCH instruction ensures that no inifinite loops are possible in the program.
+The construction of the CBRANCH instruction ensures that no infinite loops are possible in the program.
 
 ### 5.5 Store instruction
 There is one explicit store instruction for integer values.
@@ -816,7 +840,7 @@ Macro-ops `add_ri` and `xor_ri` can be optionally padded to a size of 8 or 9 byt
 
 ### 6.3 CPU simulation
 
-SuperscalarHash programs are generated to maximize the usage of all 3 execution ports of the reference CPU. The generation consists of 4 stages:
+SuperscalarHash programs are generated to maximize the usage of all 3 execution ports of the reference CPU. Chapters 6.3.1 - 6.3.4 describe the generator informally. The exact procedure, including the order and the type of every random draw, is given in chapter 6.4, which is normative: where the two differ, chapter 6.4 applies. The generation consists of 4 stages:
 
 * Decoding stage
 * Instruction selection
@@ -825,7 +849,7 @@ SuperscalarHash programs are generated to maximize the usage of all 3 execution 
 
 Program generation is complete when one of two conditions is met:
 
-1. An instruction is scheduled for execution on cycle that is equal to or greater than `RANDOMX_SUPERSCALAR_LATENCY`
+1. An instruction is scheduled for execution on cycle that is equal to or greater than `RANDOMX_SUPERSCALAR_LATENCY` (that instruction is still part of the program)
 1. The number of generated instructions reaches `3 * RANDOMX_SUPERSCALAR_LATENCY + 2`.
 
 #### 6.3.1 Decoding stage
@@ -843,18 +867,18 @@ The generator produces instructions in groups of 3 or 4 Macro-op slots such that
 |4|4-4-4-4|
 |5|3-3-10|
 
-The rules for the selection of the decoder group are following:
+The decoder group is selected by the first of the following rules that applies:
 
 * If the currently processed instruction is IMULH_R or ISMULH_R, the next decode group is group 5 (the only group that starts with a 3-byte slot and has only 3 slots).
-* If the total number of multiplications that have been generated is less than or equal to the current decoding cycle, the next decode group is group 4.
+* If the total number of multiplications (instructions IMUL_R, IMULH_R, ISMULH_R and IMUL_RCP) that have been generated is less than or equal to the current decoding cycle, the next decode group is group 4.
 * If the currently processed instruction is IMUL_RCP, the next decode group is group 0 or 3 (must begin with a 4-byte slot for multiplication).
 * Otherwise a random decode group is selected from groups 0-3.
 
 #### 6.3.2 Instruction selection
 
-Instructions are selected based on the size of the current decode group slot - see Table 6.3.2.
+Instructions are selected based on the size of the current decode group slot - see Table 6.3.2. Where a row lists several instructions, they are listed in the order used by the random selection in chapter 6.4.
 
-*Table 6.3.2 - Decoder configurations*
+*Table 6.3.2 - Instruction selection*
 
 |slot size|note|instructions|
 |-------------|-------------|-----|
@@ -862,7 +886,7 @@ Instructions are selected based on the size of the current decode group slot - s
 |3|last slot in the group|ISUB_R, IXOR_R, IMULH_R, ISMULH_R|
 |4|decode group 4, not the last slot|IMUL_R|
 |4|-|IROR_C, IADD_RS|
-|7,8,9|-|IADD_C, IXOR_C|
+|7,8,9|-|IXOR_C, IADD_C|
 |10|-|IMUL_RCP|
 
 #### 6.3.3 Port assignment
@@ -871,7 +895,7 @@ Micro-ops are issued to execution ports as soon as an available port is free. Th
 
 #### 6.3.4 Operand assignment
 
-The source operand (if needed) is selected first. is it selected from the group of registers that are available at the 'scheduleCycle' of the instruction. A register is available if the latency of its last operation has elapsed.
+The source operand (if needed) is selected first, except for IMULH_R and ISMULH_R, whose destination operand is selected first (chapter 6.4). The source operand is selected from the group of registers that are available at the 'scheduleCycle' of the instruction. A register is available if the latency of its last operation has elapsed.
 
 The destination operand is selected with more strict rules (see column 'rules' in Table 6.1.1):
 
@@ -879,12 +903,93 @@ The destination operand is selected with more strict rules (see column 'rules' i
 * cannot be the same as the source register unless the instruction allows it (see column 'rules' in Table 6.1.1)
     * this avoids optimizable operations such as `reg ^ reg` or `reg - reg`
     * it also increases intermixing of register values
-* register cannot be multiplied twice in a row unless `allowChainedMul` is true 
+* the destination of IMUL_R cannot be a register whose last instruction was IMUL_R, unless `allowChainedMul` is true
     * this avoids accumulation of trailing zeroes in registers due to excessive multiplication
     * `allowChainedMul` is set to true if an attempt to find source/destination registers failed (this is quite rare, but prevents a catastrophic failure of the generator)
-* either the last instruction applied to the register or its source must be different than the current instruction
+* either the last instruction applied to the register or its source must be different than the current instruction (ISUB_R and IADD_RS count as the same instruction here; IROR_C, IADD_C, IXOR_C and IMUL_RCP, which have no source, cannot be applied to a register whose last instruction was the same instruction, whatever the immediate values; IMULH_R and ISMULH_R use a random value in place of the source, see chapter 6.4)
     * this avoids optimizable instruction sequences such as `r1 = r1 ^ r2; r1 = r1 ^ r2` (can be eliminated) or `reg = reg >>> C1; reg = reg >>> C2` (can be reduced to one rotation) or `reg = reg + C1; reg = reg + C2` (can be reduced to one addition)
 * register `r5` cannot be the destination of the IADD_RS instruction (limitation of the x86 lea instruction)
+
+### 6.4 Generation procedure
+
+This chapter is the normative definition of the SuperscalarHash generator (chapter 6.3) and of the address register used in chapter 7.3. `getByte()` and `getUInt32()` are the BlakeGenerator calls of chapter 3.5.2, `LATENCY` is `RANDOMX_SUPERSCALAR_LATENCY`, decoder groups and slot sizes are those of Table 6.3.1, and registers are numbered 0-7 (`r0`-`r7`). Every random draw is listed; no other draw is made. A program consists of the instructions appended to `program`; the procedure is run once for each SuperscalarHash instance, in order, with the same BlakeGenerator (chapter 7.2).
+
+```
+Macro-ops: Table 6.2.1.  Instruction -> macro-ops, (srcOp, dstOp, resultOp):
+  ISUB_R sub_rr (0,0,0)   IXOR_R xor_rr (0,0,0)   IADD_RS lea_sib (0,0,0)   IMUL_R imul_rr (0,0,0)
+  IROR_C ror_ri (-,0,0)   IADD_C add_ri (-,0,0)   IXOR_C xor_ri (-,0,0)
+  IMULH_R mov_rr,mul_r,mov_rr (1,0,1)   ISMULH_R mov_rr,imul_r,mov_rr (1,0,1)
+  IMUL_RCP mov_ri,imul_rr (-,1,1); its imul_rr may not start before mov_ri's result (depCycle)
+Per register: ready = 0, lastGroup = none, lastPar = -1.   portBusy[0 .. LATENCY+3][P0,P1,P5] = free.
+cur = NONE (no macro-ops); m = 0; cycle = 0; depCycle = 0; done = false; program = []; mulCount = 0; throwAway = 0
+
+for decodeCycle = 0 .. LATENCY-1, while not done and |program| < 3*LATENCY+2:
+    group = 5 if cur is IMULH_R/ISMULH_R
+            else 4 if mulCount <= decodeCycle
+            else (0 if getByte() is odd else 3) if cur is IMUL_RCP
+            else getByte() & 3                                  # groups: Table 6.3.1
+    j = 0
+    while j < number of slots of group:
+        top = cycle
+        if m >= |cur|:                                          # start a new instruction in slot j
+                                                                # (>=: after an abandoned group cur = NONE, m may be > 0)
+            if done or |program| >= 3*LATENCY+2: break
+            cur = select(slot size, group, last = (j is the last slot)); m = 0     # see below
+        op = macro-op m of cur
+        sc = schedule(op, cycle, commit = false); if sc < 0: done = true; break
+        if m == cur.srcOp:
+            repeat up to 4 times: if selectSource(cur, sc) succeeds: stop; else sc += 1, cycle += 1
+            if all 4 failed:
+                if throwAway < 256: throwAway += 1; m = |cur|; continue      # discard, same slot j
+                cur = NONE; break                                            # abandon this group
+        if m == cur.dstOp:
+            same as above with selectDestination(cur, sc, allowChainedMul = throwAway > 0)
+        throwAway = 0
+        sc = schedule(op, sc, commit = true); if sc < 0: done = true; break
+        depCycle = sc + op.latency
+        if m == cur.resultOp: ready[cur.dst] = depCycle; lastGroup[cur.dst] = cur.group; lastPar[cur.dst] = cur.par
+        j += 1; m += 1
+        if sc >= LATENCY: done = true
+        cycle = top
+        if m == |cur|: append cur to program (src := dst if it has no source)
+                       if cur is IMUL_R, IMULH_R, ISMULH_R or IMUL_RCP: mulCount += 1
+    cycle += 1
+
+select(size, group, last):
+    3, last:  [ISUB_R, IXOR_R, IMULH_R, ISMULH_R][getByte() & 3]      3: [ISUB_R, IXOR_R][getByte() & 1]
+    4, group 4 and not last: IMUL_R                                    4: [IROR_C, IADD_RS][getByte() & 1]
+    7, 8, 9: [IXOR_C, IADD_C][getByte() & 1]                           10: IMUL_RCP
+  then, in the same order:
+    ISUB_R: group IADD_RS, par = source      IXOR_R: group IXOR_R, par = source      IMUL_R: group IMUL_R, par = source
+    IADD_RS: mod = getByte() (shift = bits 2-3); group IADD_RS, par = source
+    IROR_C: repeat imm32 = getByte() & 63 until imm32 != 0; par = -1
+    IADD_C, IXOR_C: imm32 = getUInt32(); par = -1 (one group per mnemonic for all sizes)
+    IMULH_R, ISMULH_R: par = getUInt32() as signed 32-bit; dst may equal src
+    IMUL_RCP: repeat imm32 = getUInt32() until imm32 is neither 0 nor a power of 2; par = -1
+
+schedule(op, c, commit):
+    if op is IMUL_RCP's imul_rr: c = max(c, depCycle)
+    mov_rr: return c (no port)
+    one micro-op: first c' in [c, LATENCY+3] with a free permitted port, ports tested P5, P0, P1; mark it if commit
+    mul_r / imul_r: first c' in [c, LATENCY+3] where P1 and P5 are both free; mark both if commit
+    none found: return -1
+
+choose(list): none -> fail; one -> it (no draw); else list[getUInt32() mod |list|]   (lists in register order)
+selectSource(cur, c): R = {r : ready[r] <= c}
+    if cur is IADD_RS and |R| = 2 and r5 in R: src = r5, par = 5, no draw
+    else src = choose(R); if par is "source": par = src
+selectDestination(cur, c, allowChainedMul): R = {r : ready[r] <= c
+        and (cur is IMULH_R/ISMULH_R or r != src)
+        and (allowChainedMul or cur is not IMUL_R or lastGroup[r] != IMUL_R)
+        and (lastGroup[r] != cur.group or lastPar[r] != cur.par)
+        and not (cur is IADD_RS and r = r5)}
+    dst = choose(R)
+
+Address register (7.3 step 7): lat[0..7] = 0; for each instruction in order:
+    lat[dst] = max(lat[dst] + 1, lat[src] + 1 if src != dst else 0); address register = lowest r with maximal lat[r].
+```
+
+The address register of a program is calculated with a latency of 1 cycle for every instruction, not with the latencies of the reference CPU.
 
 ## 7. Dataset
 
@@ -892,7 +997,7 @@ The Dataset is a read-only memory structure that is used during program executio
 
 In order to allow PoW verification with a lower amount of memory, the Dataset is constructed in two steps using an intermediate structure called the "Cache", which can be used to calculate Dataset items on the fly.
 
-The whole Dataset is constructed from the key value `K`, which is an input parameter of RandomX. The whole Dataset needs to be recalculated every time the key value changes. Fig. 7.1 shows the process of Dataset construction. Note: the maximum supported length of `K` is 60 bytes. Using a longer key results in implementation-defined behavior.
+The whole Dataset is constructed from the key value `K`, which is an input parameter of RandomX. The whole Dataset needs to be recalculated every time the key value changes. Fig. 7.1 shows the process of Dataset construction. Note: the maximum supported length of `K` is 60 bytes. Using a longer key results in implementation-defined behavior (the reference implementation uses the whole key for the Cache construction in chapter 7.1 and only its first 60 bytes for the BlakeGenerator in chapter 7.2).
 
 *Figure 7.1 - Dataset construction*
 
@@ -917,11 +1022,11 @@ The key `K` is expanded into the Cache using the "memory fill" function of Argon
 |secret size|0|
 |assoc. data size|0|
 
-The finalizer and output calculation steps of Argon2 are omitted. The output is the filled memory array.
+The finalizer and output calculation steps of Argon2 are omitted. The output is the filled memory array. The output size 0 is only the value of the tag length field in the input of the initial Argon2 hash `H0` (it is not a valid tag length for standard Argon2), so an implementation based on an Argon2 library must use its memory-fill procedure directly.
 
 ### 7.2 SuperscalarHash initialization
 
-The key value `K` is used to initialize a BlakeGenerator (see chapter 3.5), which is then used to generate 8 SuperscalarHash instances for Dataset initialization.
+The key value `K` is used to initialize a BlakeGenerator (see chapter 3.5), which is then used to generate `RANDOMX_CACHE_ACCESSES` (8 by default) SuperscalarHash instances for Dataset initialization, one after another, according to chapter 6.4.
 
 ### 7.3 Dataset block generation
 Dataset items are numbered sequentially with `itemNumber` starting from 0. Each 64-byte Dataset item is generated independently using 8 SuperscalarHash functions (generated according to chapter 7.2) and by XORing randomly selected data from the Cache (constructed according to chapter 7.1).
@@ -942,7 +1047,7 @@ The item data is represented by 8 64-bit integer registers: `r0`-`r7`.
 1. Load a 64-byte item from the Cache. The item index is given by `cacheIndex` modulo the total number of 64-byte items in Cache.
 1. Execute `SuperscalarHash[i](r0, r1, r2, r3, r4, r5, r6, r7)`, where `SuperscalarHash[i]` refers to the i-th SuperscalarHash function. This modifies the values of the registers `r0`-`r7`.
 1. XOR all registers with the 64 bytes loaded in step 4 (8 bytes per column in order `r0`-`r7`).
-1. Set `cacheIndex` to the value of the register that has the longest dependency chain in the SuperscalarHash function executed in step 5.
+1. Set `cacheIndex` to the value of the register that has the longest dependency chain in the SuperscalarHash function executed in step 5 (the address register of chapter 6.4, calculated when the function is generated).
 1. Set `i = i + 1` and go back to step 4 if `i < RANDOMX_CACHE_ACCESSES`.
 1. Concatenate registers `r0`-`r7` in little endian format to get the final Dataset item data.
 
