@@ -1,0 +1,139 @@
+diff -ruN a/src/argon2_ref.c b/src/argon2_ref.c
+--- a/src/argon2_ref.c
++++ b/src/argon2_ref.c
+@@ -107,6 +107,9 @@
+ 	xor_block(next_block, &blockR);
+ }
+ 
++/* Agent C2 instrumentation: when non-NULL, receives ref_index for every (pass, index) of a 1-lane instance */
++uint32_t* rx_c2_refs = NULL;
++
+ void randomx_argon2_fill_segment_ref(const argon2_instance_t *instance,
+ 	argon2_position_t position) {
+ 	block *ref_block = NULL, *curr_block = NULL;
+@@ -165,6 +168,7 @@
+ 		ref_index = randomx_argon2_index_alpha(instance, &position, pseudo_rand & 0xFFFFFFFF,
+ 			ref_lane == position.lane);
+ 
++		if (rx_c2_refs) rx_c2_refs[(uint64_t)position.pass * instance->lane_length + (curr_offset % instance->lane_length)] = (uint32_t)ref_index;
+ 		/* 2 Creating a new block */
+ 		ref_block =
+ 			instance->memory + instance->lane_length * ref_lane + ref_index;
+diff -ruN a/src/bytecode_machine.hpp b/src/bytecode_machine.hpp
+--- a/src/bytecode_machine.hpp
++++ b/src/bytecode_machine.hpp
+@@ -30,6 +30,7 @@
+ 
+ #include "common.hpp"
+ #include "intrin_portable.h"
++#include "instr_hooks.hpp"
+ #include "instruction.hpp"
+ #include "program.hpp"
+ 
+@@ -266,6 +267,7 @@
+ 		}
+ 
+ 		static void exe_ISTORE(RANDOMX_EXE_ARGS) {
++			if (instr::g) instr::g->write((uint32_t)((*ibc.idst + ibc.imm) & ibc.memMask), 8, 0);
+ 			store64(scratchpad + ((*ibc.idst + ibc.imm) & ibc.memMask), *ibc.isrc);
+ 		}
+ 	protected:
+@@ -284,6 +286,7 @@
+ 
+ 		static void* getScratchpadAddress(InstructionByteCode& ibc, uint8_t* scratchpad) {
+ 			uint32_t addr = (*ibc.isrc + ibc.imm) & ibc.memMask;
++			if (instr::g) instr::g->read(addr, 8, 0);
+ 			return scratchpad + addr;
+ 		}
+ 
+diff -ruN a/src/instr_hooks.cpp b/src/instr_hooks.cpp
+--- a/src/instr_hooks.cpp
++++ b/src/instr_hooks.cpp
+@@ -0,0 +1,2 @@
++#include "instr_hooks.hpp"
++namespace instr { thread_local Tracker* g = nullptr; }
+diff -ruN a/src/instr_hooks.hpp b/src/instr_hooks.hpp
+--- a/src/instr_hooks.hpp
++++ b/src/instr_hooks.hpp
+@@ -0,0 +1,16 @@
++// Agent C2 instrumentation hooks (private copy; not part of RandomX)
++#pragma once
++#include <cstdint>
++namespace instr {
++	struct Tracker {
++		virtual ~Tracker() {}
++		// scratchpad offset and size in bytes; kind: 0 = instr read, 1 = step2 line read, 2 = step3 line read
++		virtual void read(uint32_t off, uint32_t size, int kind) {}
++		// kind: 0 = ISTORE, 1 = step9 (integer regs), 2 = step11 (F regs)
++		virtual void write(uint32_t off, uint32_t size, int kind) {}
++		virtual void iterEnd() {}
++		// v1/v2 step 10: F before mixing, E (keys), F after mixing (each 64 bytes)
++		virtual void mix(const void* fpre, const void* e, const void* fpost) {}
++	};
++	extern thread_local Tracker* g;
++}
+diff -ruN a/src/vm_interpreted.cpp b/src/vm_interpreted.cpp
+--- a/src/vm_interpreted.cpp
++++ b/src/vm_interpreted.cpp
+@@ -37,6 +37,7 @@
+ #include "intrin_portable.h"
+ #include "reciprocal.h"
+ #include "soft_aes.h"
++#include "instr_hooks.hpp"
+ 
+ namespace randomx {
+ 
+@@ -73,6 +74,7 @@
+ 			spAddr1 ^= spMix >> 32;
+ 			spAddr1 &= ScratchpadL3Mask64;
+ 			
++			if (instr::g) { instr::g->read(spAddr0, 64, 1); instr::g->read(spAddr1, 64, 2); }
+ 			for (unsigned i = 0; i < RegistersCount; ++i)
+ 				nreg.r[i] ^= load64(scratchpad + spAddr0 + 8 * i);
+ 
+@@ -93,8 +95,16 @@
+ 			datasetRead(readPtr, nreg.r);
+ 			std::swap(mem.mx, mem.ma);
+ 
++			if (instr::g) instr::g->write(spAddr1, 64, 1);
+ 			for (unsigned i = 0; i < RegistersCount; ++i)
+ 				store64(scratchpad + spAddr1 + 8 * i, nreg.r[i]);
++			alignas(16) uint8_t instrFpre[64], instrE[64], instrFpost[64];
++			if (instr::g) {
++				for (unsigned i = 0; i < RegisterCountFlt; ++i) {
++					rx_store_vec_f128((double*)(instrFpre + 16 * i), nreg.f[i]);
++					rx_store_vec_f128((double*)(instrE + 16 * i), nreg.e[i]);
++				}
++			}
+ 
+ 			if (randomx_vm::getFlags() & RANDOMX_FLAG_V2) {
+ 				rx_vec_i128 ekey[RegisterCountFlt];
+@@ -120,11 +130,18 @@
+ 					nreg.f[i] = rx_xor_vec_f128(nreg.f[i], nreg.e[i]);
+ 			}
+ 
++			if (instr::g) {
++				for (unsigned i = 0; i < RegisterCountFlt; ++i)
++					rx_store_vec_f128((double*)(instrFpost + 16 * i), nreg.f[i]);
++				instr::g->mix(instrFpre, instrE, instrFpost);
++				instr::g->write(spAddr0, 64, 2);
++			}
+ 			for (unsigned i = 0; i < RegisterCountFlt; ++i)
+ 				rx_store_vec_f128((double*)(scratchpad + spAddr0 + 16 * i), nreg.f[i]);
+ 
+ 			spAddr0 = 0;
+ 			spAddr1 = 0;
++			if (instr::g) instr::g->iterEnd();
+ 		}
+ 
+ 		for (unsigned i = 0; i < RegistersCount; ++i)
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -53,6 +53,7 @@
+ src/instructions_portable.cpp
+ src/reciprocal.c
+ src/virtual_machine.cpp
++src/instr_hooks.cpp
+ src/vm_compiled_light.cpp
+ src/blake2/blake2b.c)
+ 

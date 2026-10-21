@@ -1,0 +1,79 @@
+diff -ru rx-p/src/asm/program_read_dataset.inc rx-t0/src/asm/program_read_dataset.inc
+--- rx-p/src/asm/program_read_dataset.inc	2026-10-21 18:49:39.000000000 +0000
++++ rx-t0/src/asm/program_read_dataset.inc	2026-10-21 20:59:50.782449937 +0000
+@@ -5,7 +5,7 @@
+ 	xor rbp, rax                       ;# modify "mx"
+ 	mov edx, ebp                       ;# edx = mx
+ 	and edx, RANDOMX_DATASET_BASE_MASK
+-	prefetchnta byte ptr [rdi+rdx]
++	prefetcht0 byte ptr [rdi+rdx]
+ 	xor r9,  qword ptr [rdi+rcx+8]
+ 	xor r10, qword ptr [rdi+rcx+16]
+ 	xor r11, qword ptr [rdi+rcx+24]
+diff -ru rx-p/src/asm/program_read_dataset_v2.inc rx-t0/src/asm/program_read_dataset_v2.inc
+--- rx-p/src/asm/program_read_dataset_v2.inc	2026-10-21 18:49:39.000000000 +0000
++++ rx-t0/src/asm/program_read_dataset_v2.inc	2026-10-21 20:59:50.783828994 +0000
+@@ -5,7 +5,7 @@
+ 	mov edx, ebp                       ;# edx = "ma"
+ 	ror rbp, 32                        ;# swap "ma" and "mx"
+ 	and edx, RANDOMX_DATASET_BASE_MASK
+-	prefetchnta byte ptr [rdi+rdx]
++	prefetcht0 byte ptr [rdi+rdx]
+ 	xor r9,  qword ptr [rdi+rcx+8]
+ 	xor r10, qword ptr [rdi+rcx+16]
+ 	xor r11, qword ptr [rdi+rcx+24]
+diff -ru rx-p/src/jit_compiler_x86.cpp rx-t0/src/jit_compiler_x86.cpp
+--- rx-p/src/jit_compiler_x86.cpp	2026-10-21 21:02:18.144567189 +0000
++++ rx-t0/src/jit_compiler_x86.cpp	2026-10-21 20:59:50.737946567 +0000
+@@ -43,7 +43,6 @@
+ 	uint32_t tpart_thresh = 0;
+ 	uint32_t tpart_mask = 0xFFFFFFFFu;
+ 	uint64_t tpart_base = 0;
+-	int tpart_prefetch_t0 = 0;
+ }
+ namespace randomx {
+ 	/*
+@@ -334,15 +333,8 @@
+ 			throw std::runtime_error("setPagesRX");
+ 	}
+ 
+-	static void tpartPrefetchT0(uint8_t* p, size_t n) {
+-		// switch prefetchnta (0F 18 /0) to prefetcht0 (0F 18 /1) inside a copied template
+-		for (size_t i = 0; i + 2 < n; ++i)
+-			if (p[i] == 0x0F && p[i + 1] == 0x18 && ((p[i + 2] >> 3) & 7) == 0) p[i + 2] |= 0x08;
+-	}
+-
+ 	void JitCompilerX86::generateProgram(Program& prog, ProgramConfiguration& pcfg) {
+ 		generateProgramPrologue(prog, pcfg);
+-		size_t tStart = codePos;
+ 		if (vmFlags & RANDOMX_FLAG_V2) {
+ 			memcpy(code + codePos, codeReadDatasetV2, readDatasetV2Size);
+ 			codePos += readDatasetV2Size;
+@@ -351,7 +343,6 @@
+ 			memcpy(code + codePos, codeReadDataset, readDatasetSize);
+ 			codePos += readDatasetSize;
+ 		}
+-		if (tpart_prefetch_t0) tpartPrefetchT0(code + tStart, codePos - tStart);
+ 		generateProgramEpilogue(prog, pcfg);
+ 	}
+ 
+@@ -384,7 +375,6 @@
+ 			size_t start = codePos;
+ 			emit(pf, pfSize);
+ 			tpartPatch(code + start, pfSize, datasetOffset / CacheLineSize);
+-			if (tpart_prefetch_t0) tpartPrefetchT0(code + start, pfSize);
+ 			const uint8_t* ld = (const uint8_t*)ADDR(tpart_load);
+ 			size_t ldSize = (const uint8_t*)ADDR(tpart_load_end) - ld;
+ 			start = codePos;
+diff -ru rx-p/src/jit_compiler_x86_static.S rx-t0/src/jit_compiler_x86_static.S
+--- rx-p/src/jit_compiler_x86_static.S	2026-10-21 20:51:11.784835732 +0000
++++ rx-t0/src/jit_compiler_x86_static.S	2026-10-21 20:59:50.786637845 +0000
+@@ -287,7 +287,7 @@
+ 	and edx, 0x44444444
+ 	shl rdx, 6
+ 	mov rax, 0x1111111111111111
+-	prefetchnta byte ptr [rax+rdx]
++	prefetcht0 byte ptr [rax+rdx]
+ tpart_prefetch_skip:
+ DECL(tpart_prefetch_end):
+ 	nop

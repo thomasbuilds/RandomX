@@ -1,0 +1,139 @@
+diff -ru /home/user/RandomX/src/jit_compiler_x86.cpp rx-p/src/jit_compiler_x86.cpp
+--- /home/user/RandomX/src/jit_compiler_x86.cpp	2026-10-21 15:54:45.472694431 +0000
++++ rx-p/src/jit_compiler_x86.cpp	2026-10-21 21:02:18.144567189 +0000
+@@ -37,6 +37,14 @@
+ #include "virtual_memory.h"
+ #include "soft_aes.h"
+ 
++extern "C" {
++	void tpart_prefetch_v1(); void tpart_prefetch_v2(); void tpart_prefetch_end(); void tpart_load(); void tpart_load_end();
++	int tpart_enabled = 0;
++	uint32_t tpart_thresh = 0;
++	uint32_t tpart_mask = 0xFFFFFFFFu;
++	uint64_t tpart_base = 0;
++	int tpart_prefetch_t0 = 0;
++}
+ namespace randomx {
+ 	/*
+ 
+@@ -326,8 +334,15 @@
+ 			throw std::runtime_error("setPagesRX");
+ 	}
+ 
++	static void tpartPrefetchT0(uint8_t* p, size_t n) {
++		// switch prefetchnta (0F 18 /0) to prefetcht0 (0F 18 /1) inside a copied template
++		for (size_t i = 0; i + 2 < n; ++i)
++			if (p[i] == 0x0F && p[i + 1] == 0x18 && ((p[i + 2] >> 3) & 7) == 0) p[i + 2] |= 0x08;
++	}
++
+ 	void JitCompilerX86::generateProgram(Program& prog, ProgramConfiguration& pcfg) {
+ 		generateProgramPrologue(prog, pcfg);
++		size_t tStart = codePos;
+ 		if (vmFlags & RANDOMX_FLAG_V2) {
+ 			memcpy(code + codePos, codeReadDatasetV2, readDatasetV2Size);
+ 			codePos += readDatasetV2Size;
+@@ -336,9 +351,23 @@
+ 			memcpy(code + codePos, codeReadDataset, readDatasetSize);
+ 			codePos += readDatasetSize;
+ 		}
++		if (tpart_prefetch_t0) tpartPrefetchT0(code + tStart, codePos - tStart);
+ 		generateProgramEpilogue(prog, pcfg);
+ 	}
+ 
++	static void tpartPatch(uint8_t* p, size_t n, uint32_t off) {
++		for (size_t i = 0; i + 4 <= n; ++i) {
++			uint32_t v; memcpy(&v, p + i, 4);
++			if (v == 0x33333333u) { memcpy(p + i, &off, 4); i += 3; continue; }
++			if (v == 0x22222222u) { memcpy(p + i, &tpart_thresh, 4); i += 3; continue; }
++			if (v == 0x44444444u) { memcpy(p + i, &tpart_mask, 4); i += 3; continue; }
++			if (i + 8 <= n) {
++				uint64_t w; memcpy(&w, p + i, 8);
++				if (w == 0x1111111111111111ull) { memcpy(p + i, &tpart_base, 8); i += 7; continue; }
++			}
++		}
++	}
++
+ 	void JitCompilerX86::generateProgramLight(Program& prog, ProgramConfiguration& pcfg, uint32_t datasetOffset) {
+ 		generateProgramPrologue(prog, pcfg);
+ 		if (vmFlags & RANDOMX_FLAG_V2) {
+@@ -349,6 +378,19 @@
+ 		}
+ 		emit(ADD_EBX_I);
+ 		emit32(datasetOffset / CacheLineSize);
++		if (tpart_enabled) {
++			const uint8_t* pf = (vmFlags & RANDOMX_FLAG_V2) ? (const uint8_t*)ADDR(tpart_prefetch_v2) : (const uint8_t*)ADDR(tpart_prefetch_v1);
++			size_t pfSize = (const uint8_t*)ADDR(tpart_prefetch_end) - pf;
++			size_t start = codePos;
++			emit(pf, pfSize);
++			tpartPatch(code + start, pfSize, datasetOffset / CacheLineSize);
++			if (tpart_prefetch_t0) tpartPrefetchT0(code + start, pfSize);
++			const uint8_t* ld = (const uint8_t*)ADDR(tpart_load);
++			size_t ldSize = (const uint8_t*)ADDR(tpart_load_end) - ld;
++			start = codePos;
++			emit(ld, ldSize);
++			tpartPatch(code + start, ldSize, datasetOffset / CacheLineSize);
++		}
+ 		emitByte(CALL);
+ 		emit32(superScalarHashOffset - (codePos + 4));
+ 		emit(codeReadDatasetLightSshFin, readDatasetLightFinSize);
+diff -ru /home/user/RandomX/src/jit_compiler_x86_static.S rx-p/src/jit_compiler_x86_static.S
+--- /home/user/RandomX/src/jit_compiler_x86_static.S	2026-10-21 15:54:45.472694431 +0000
++++ rx-p/src/jit_compiler_x86_static.S	2026-10-21 20:51:11.784835732 +0000
+@@ -261,6 +261,57 @@
+ rx_program_end:
+ 	nop
+ 
++
++#if defined(__ELF__)
++.section .rodata
++#endif
++/* agentT partial-Dataset templates (timing harness only, not consensus code) */
++.global DECL(tpart_prefetch_v1)
++.global DECL(tpart_prefetch_v2)
++.global DECL(tpart_prefetch_end)
++.global DECL(tpart_load)
++.global DECL(tpart_load_end)
++.balign 64
++DECL(tpart_prefetch_v1):
++	mov edx, ebp
++	shr edx, 6
++	jmp tpart_prefetch_common
++DECL(tpart_prefetch_v2):
++	mov rdx, rbp
++	shr rdx, 38
++tpart_prefetch_common:
++	and edx, RANDOMX_DATASET_BASE_MASK / 64
++	add edx, 0x33333333
++	cmp edx, 0x22222222
++	jae tpart_prefetch_skip
++	and edx, 0x44444444
++	shl rdx, 6
++	mov rax, 0x1111111111111111
++	prefetchnta byte ptr [rax+rdx]
++tpart_prefetch_skip:
++DECL(tpart_prefetch_end):
++	nop
++.balign 64
++DECL(tpart_load):
++	cmp ebx, 0x22222222
++	jae tpart_load_skip
++	and ebx, 0x44444444
++	shl rbx, 6
++	mov rax, 0x1111111111111111
++	add rbx, rax
++	mov r8, qword ptr [rbx]
++	mov r9, qword ptr [rbx+8]
++	mov r10, qword ptr [rbx+16]
++	mov r11, qword ptr [rbx+24]
++	mov r12, qword ptr [rbx+32]
++	mov r13, qword ptr [rbx+40]
++	mov r14, qword ptr [rbx+48]
++	mov r15, qword ptr [rbx+56]
++	.byte 0xEB, 0x05
++tpart_load_skip:
++DECL(tpart_load_end):
++	nop
++
+ .text
+ .balign 64
+ DECL(randomx_reciprocal_fast):
