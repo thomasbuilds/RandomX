@@ -1,0 +1,177 @@
+--- a/src/bytecode_machine.cpp
++++ b/src/bytecode_machine.cpp
+@@ -29,6 +29,10 @@
+ #include "bytecode_machine.hpp"
+ #include "reciprocal.h"
+ 
++namespace rxs {
++	Instr G;
++}
++
+ namespace randomx {
+ 
+ 	const int_reg_t BytecodeMachine::zero = 0;
+--- a/src/bytecode_machine.hpp
++++ b/src/bytecode_machine.hpp
+@@ -32,6 +32,58 @@
+ #include "intrin_portable.h"
+ #include "instruction.hpp"
+ #include "program.hpp"
++#include <cstring>
++#if defined(__SSE2__)
++#include <xmmintrin.h>
++#endif
++
++//==== Agent S instrumentation (private copy, not part of RandomX) ====
++namespace rxs {
++	struct Instr {
++		uint64_t fpOps[4];          //rounding FP arithmetic instructions executed, by current rounding mode
++		uint64_t cfroundExec;       //CFROUND executions
++		uint64_t cfroundWrite;      //CFROUND executions that write fprc (v1: all, v2: gate passes)
++		uint64_t cfroundChange;     //writes that change the rounding mode
++		uint64_t cbranchExec, cbranchTaken;
++		uint64_t dynInstr;          //dynamic instruction count
++		uint32_t curMode;           //shadow of fprc
++		uint32_t mxcsrFlags;        //accumulated MXCSR status flags (bits 0-5)
++		//FP result classification per lane (results of FADD/FSUB/FMUL/FDIV/FSQRT/FSCAL)
++		uint64_t resLanes, resNaN, resDenorm, resInf, resZero;
++		//per-iteration CBRANCH bookkeeping
++		uint32_t jumpsIter, reexecIter;
++		int consecPc, consec, maxConsec;
++		uint64_t consecHist[8];     //histogram of consecutive jumps of one CBRANCH instance (1,2,3..)
++		uint64_t distHist[RANDOMX_PROGRAM_MAX_SIZE + 2]; //re-executed instructions per taken jump
++		//memory watch (one 8-byte word), used by influence experiments
++		int64_t watchWord;          //-1 = none
++		int watchEvent;             //0 none, 1 read first, 2 write first
++		//write coverage bitmap (8-byte words), nullptr = off
++		uint8_t* wbm;
++		//last-writer map (one byte per 8-byte word; ISTORE marks 3), nullptr = off
++		uint8_t* lw;
++	};
++	extern Instr G;
++	inline void classifyLane(uint64_t x) {
++		uint64_t ex = (x >> 52) & 0x7FF, man = x & ((1ULL << 52) - 1);
++		G.resLanes++;
++		if (ex == 0x7FF) { if (man) G.resNaN++; else G.resInf++; }
++		else if (ex == 0) { if (man) G.resDenorm++; else G.resZero++; }
++	}
++	inline void classifyVec(rx_vec_f128 v) {
++		alignas(16) uint64_t t[2];
++		rx_store_vec_f128((double*)t, v);
++		classifyLane(t[0]); classifyLane(t[1]);
++	}
++	inline void watchRead(uint32_t addr) {
++		if (G.watchWord >= 0 && G.watchEvent == 0 && (int64_t)(addr >> 3) == G.watchWord) G.watchEvent = 1;
++	}
++	inline void watchWrite(uint32_t addr) {
++		if (G.wbm) G.wbm[addr >> 6] |= (uint8_t)(1u << ((addr >> 3) & 7));
++		if (G.lw) G.lw[addr >> 3] = 3;
++		if (G.watchWord >= 0 && G.watchEvent == 0 && (int64_t)(addr >> 3) == G.watchWord) G.watchEvent = 2;
++	}
++}
+ 
+ namespace randomx {
+ 
+@@ -126,6 +178,7 @@
+ 		static void executeBytecode(InstructionByteCode bytecode[RANDOMX_PROGRAM_MAX_SIZE], uint8_t* scratchpad, ProgramConfiguration& config, randomx_flags flags) {
+ 			for (int pc = 0, n = Program::getSize(flags); pc < n; ++pc) {
+ 				auto& ibc = bytecode[pc];
++				rxs::G.dynInstr++;
+ 				executeInstruction(ibc, pc, scratchpad, config, flags);
+ 			}
+ 		}
+@@ -214,29 +267,35 @@
+ 
+ 		static void exe_FADD_R(RANDOMX_EXE_ARGS) {
+ 			*ibc.fdst = rx_add_vec_f128(*ibc.fdst, *ibc.fsrc);
++			rxs::G.fpOps[rxs::G.curMode]++; rxs::classifyVec(*ibc.fdst);
+ 		}
+ 
+ 		static void exe_FADD_M(RANDOMX_EXE_ARGS) {
+ 			rx_vec_f128 fsrc = rx_cvt_packed_int_vec_f128(getScratchpadAddress(ibc, scratchpad));
+ 			*ibc.fdst = rx_add_vec_f128(*ibc.fdst, fsrc);
++			rxs::G.fpOps[rxs::G.curMode]++; rxs::classifyVec(*ibc.fdst);
+ 		}
+ 
+ 		static void exe_FSUB_R(RANDOMX_EXE_ARGS) {
+ 			*ibc.fdst = rx_sub_vec_f128(*ibc.fdst, *ibc.fsrc);
++			rxs::G.fpOps[rxs::G.curMode]++; rxs::classifyVec(*ibc.fdst);
+ 		}
+ 
+ 		static void exe_FSUB_M(RANDOMX_EXE_ARGS) {
+ 			rx_vec_f128 fsrc = rx_cvt_packed_int_vec_f128(getScratchpadAddress(ibc, scratchpad));
+ 			*ibc.fdst = rx_sub_vec_f128(*ibc.fdst, fsrc);
++			rxs::G.fpOps[rxs::G.curMode]++; rxs::classifyVec(*ibc.fdst);
+ 		}
+ 
+ 		static void exe_FSCAL_R(RANDOMX_EXE_ARGS) {
+ 			const rx_vec_f128 mask = rx_set1_vec_f128(0x80F0000000000000);
+ 			*ibc.fdst = rx_xor_vec_f128(*ibc.fdst, mask);
++			rxs::classifyVec(*ibc.fdst);
+ 		}
+ 
+ 		static void exe_FMUL_R(RANDOMX_EXE_ARGS) {
+ 			*ibc.fdst = rx_mul_vec_f128(*ibc.fdst, *ibc.fsrc);
++			rxs::G.fpOps[rxs::G.curMode]++; rxs::classifyVec(*ibc.fdst);
+ 		}
+ 
+ 		static void exe_FDIV_M(RANDOMX_EXE_ARGS) {
+@@ -245,28 +304,49 @@
+ 				rx_cvt_packed_int_vec_f128(getScratchpadAddress(ibc, scratchpad))
+ 			);
+ 			*ibc.fdst = rx_div_vec_f128(*ibc.fdst, fsrc);
++			rxs::G.fpOps[rxs::G.curMode]++; rxs::classifyVec(*ibc.fdst);
+ 		}
+ 
+ 		static void exe_FSQRT_R(RANDOMX_EXE_ARGS) {
+ 			*ibc.fdst = rx_sqrt_vec_f128(*ibc.fdst);
++			rxs::G.fpOps[rxs::G.curMode]++; rxs::classifyVec(*ibc.fdst);
+ 		}
+ 
+ 		static void exe_CBRANCH(RANDOMX_EXE_ARGS) {
+ 			*ibc.idst += ibc.imm;
++			rxs::G.cbranchExec++;
+ 			if ((*ibc.idst & ibc.memMask) == 0) {
++				rxs::G.cbranchTaken++;
++				int dist = pc - ibc.target;
++				rxs::G.jumpsIter++;
++				rxs::G.reexecIter += dist;
++				rxs::G.distHist[dist]++;
++				if (rxs::G.consecPc == pc) rxs::G.consec++; else { rxs::G.consecPc = pc; rxs::G.consec = 1; }
++				if (rxs::G.consec > rxs::G.maxConsec) rxs::G.maxConsec = rxs::G.consec;
+ 				pc = ibc.target;
+ 			}
++			else if (rxs::G.consecPc == pc) {
++				rxs::G.consecHist[rxs::G.consec < 7 ? rxs::G.consec : 7]++;
++				rxs::G.consecPc = -1; rxs::G.consec = 0;
++			}
+ 		}
+ 
+ 		static void exe_CFROUND(RANDOMX_EXE_ARGS) {
+ 			uint64_t isrc = rotr(*ibc.isrc, ibc.imm);
++			rxs::G.cfroundExec++;
+ 			if (((flags & RANDOMX_FLAG_V2) == 0) || ((isrc & 60) == 0)) {
++				rxs::G.mxcsrFlags |= _mm_getcsr() & 0x3F;
++				rxs::G.cfroundWrite++;
++				if ((uint32_t)(isrc % 4) != rxs::G.curMode) rxs::G.cfroundChange++;
++				rxs::G.curMode = (uint32_t)(isrc % 4);
+ 				rx_set_rounding_mode(isrc % 4);
+ 			}
+ 		}
+ 
+ 		static void exe_ISTORE(RANDOMX_EXE_ARGS) {
+-			store64(scratchpad + ((*ibc.idst + ibc.imm) & ibc.memMask), *ibc.isrc);
++			uint32_t waddr = (uint32_t)((*ibc.idst + ibc.imm) & ibc.memMask);
++			rxs::watchWrite(waddr);
++			store64(scratchpad + waddr, *ibc.isrc);
+ 		}
+ 	protected:
+ 		static rx_vec_f128 maskRegisterExponentMantissa(ProgramConfiguration& config, rx_vec_f128 x) {
+@@ -284,6 +364,7 @@
+ 
+ 		static void* getScratchpadAddress(InstructionByteCode& ibc, uint8_t* scratchpad) {
+ 			uint32_t addr = (*ibc.isrc + ibc.imm) & ibc.memMask;
++			rxs::watchRead(addr);
+ 			return scratchpad + addr;
+ 		}
+ 
