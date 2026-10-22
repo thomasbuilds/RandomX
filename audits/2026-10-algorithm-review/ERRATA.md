@@ -32,5 +32,5 @@ of the huge page size leaked, and then the whole mapping; the default sizes with
 says "at most 275 of 512 literals observed" (over 3,000 keys; the maximum over 20,000 keys was 290); `4230131` says
 the prefetch reduces "the light-mode tradeoff margin ... by about a quarter" (the light/fast cost ratio falls by
 about a quarter, 2.24 to 1.66; its excess over 1 falls by almost half, 1.24 to 0.66). `2c1f5ec` also says B-1 is
-"live on macOS/FreeBSD arm64": XNU leaves a 128-byte red zone below SP, so macOS is not affected; FreeBSD and
-OpenBSD are (AUDIT_v2_2026-10.md section 8).
+"live on macOS/FreeBSD arm64": XNU leaves a 128-byte red zone below SP, so macOS is not affected; FreeBSD, NetBSD
+and OpenBSD are (AUDIT_v2_2026-10.md section 8).

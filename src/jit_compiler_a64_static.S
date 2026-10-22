@@ -176,8 +176,9 @@ DECL(randomx_program_aarch64):
 	mrs	x8, fpcr
 	rbit	x8, x8
 
-	# Save x0
-	str	x0, [sp, -16]!
+	# Save x0 and reserve stack space for light mode
+	# ([sp, 16] -> dataset item, [sp, 80] -> saved x0, x1, x2, x30)
+	str	x0, [sp, -112]!
 
 	# Read literals
 	ldr	x0, literal_x0
@@ -360,7 +361,6 @@ rx_program_xor_with_dataset_line:
 	eor	x15, x15, x19
 
 DECL(randomx_program_aarch64_update_spMix1):
-rx_program_update_spMix1:
 	# JIT compiler will replace it with "eor x10, config.readReg0, config.readReg1"
 	eor	x10, x0, x0
 
@@ -464,8 +464,8 @@ randomx_program_aarch64_FE_store:
 	subs	x3, x3, 1
 	bne	DECL(randomx_program_aarch64_main_loop)
 	
-	# Restore x0
-	ldr	x0, [sp], 16
+	# Restore x0 and release stack space for light mode
+	ldr	x0, [sp], 112
 
 	# Store integer registers
 	stp	x4, x5, [x0, 0]
@@ -497,9 +497,10 @@ randomx_program_aarch64_FE_store:
 	ret
 
 DECL(randomx_program_aarch64_vm_instructions_end_light):
-	sub	sp, sp, 96
-	stp	x0, x1, [sp, 64]
-	stp	x2, x30, [sp, 80]
+	# Use the stack space reserved in the prologue: the dataset item must stay allocated
+	# until rx_program_xor_with_dataset_line reads it (AAPCS64 has no red zone)
+	stp	x0, x1, [sp, 80]
+	stp	x2, x30, [sp, 96]
 
 	lsr	x2, x9, 32
 
@@ -518,7 +519,7 @@ DECL(randomx_program_aarch64_vm_instructions_end_light_tweak):
 	mov	x0, x1
 
 	# x1 -> pointer to output
-	mov	x1, sp
+	add	x1, sp, 16
 
 	# x2 -> item number
 	lsr	x2, x2, 6
@@ -530,26 +531,11 @@ DECL(randomx_program_aarch64_light_dataset_offset):
 
 	bl	rx_calc_dataset_item
 
-	# xor integer registers with the dataset item while it is still inside this stack frame
-	# (AAPCS64 has no red zone: memory below sp can be overwritten by a signal frame at any time)
-	ldp	x20, x19, [sp]
-	eor	x4, x4, x20
-	eor	x5, x5, x19
-	ldp	x20, x19, [sp, 16]
-	eor	x6, x6, x20
-	eor	x7, x7, x19
-	ldp	x20, x19, [sp, 32]
-	eor	x12, x12, x20
-	eor	x13, x13, x19
-	ldp	x20, x19, [sp, 48]
-	eor	x14, x14, x20
-	eor	x15, x15, x19
+	add	x10, sp, 16
+	ldp	x0, x1, [sp, 80]
+	ldp	x2, x30, [sp, 96]
 
-	ldp	x0, x1, [sp, 64]
-	ldp	x2, x30, [sp, 80]
-	add	sp, sp, 96
-
-	b	rx_program_update_spMix1
+	b	rx_program_xor_with_dataset_line
 
 DECL(randomx_program_aarch64_vm_instructions_end_v1):
 	lsr	x10, x9, 32
