@@ -39,7 +39,7 @@ RandomX is written in C++11 and builds a static library with a C API provided by
 
 ### Linux
 
-Build dependencies: `cmake` (minimum 3.10) and `gcc` (minimum version 4.8, but version 7+ is recommended). RISC-V builds require GCC 14+ or Clang 19+ (vector AES intrinsics).
+Build dependencies: `cmake` (minimum 3.10) and `gcc` (minimum version 4.8, but version 7+ is recommended). RISC-V builds require GCC 14+ or Clang 20+ (vector AES intrinsics).
 
 To build optimized binaries for your machine, run:
 ```
