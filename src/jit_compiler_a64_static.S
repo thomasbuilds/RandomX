@@ -177,7 +177,6 @@ DECL(randomx_program_aarch64):
 	rbit	x8, x8
 
 	# Save x0 and reserve stack space for light mode
-	# ([sp, 16] -> dataset item, [sp, 80] -> saved x0, x1, x2, x30)
 	str	x0, [sp, -112]!
 
 	# Read literals
@@ -464,7 +463,7 @@ randomx_program_aarch64_FE_store:
 	subs	x3, x3, 1
 	bne	DECL(randomx_program_aarch64_main_loop)
 	
-	# Restore x0 and release stack space for light mode
+	# Restore x0
 	ldr	x0, [sp], 112
 
 	# Store integer registers
@@ -497,8 +496,6 @@ randomx_program_aarch64_FE_store:
 	ret
 
 DECL(randomx_program_aarch64_vm_instructions_end_light):
-	# Use the stack space reserved in the prologue: the dataset item must stay allocated
-	# until rx_program_xor_with_dataset_line reads it (AAPCS64 has no red zone)
 	stp	x0, x1, [sp, 80]
 	stp	x2, x30, [sp, 96]
 
