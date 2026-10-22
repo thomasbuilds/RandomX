@@ -1,7 +1,7 @@
 # RandomX algorithm-level review: the v1 design and the v2 changes
 
 Repository: thomasbuilds/RandomX, branch `claude/modest-meitner-dkvpgd`.
-Reviewed algorithm: master `a901d5b` (= upstream tevador/RandomX v2.0.1 plus the fix commits #340-#363), as
+Reviewed algorithm: master `a901d5b` (= upstream tevador/RandomX v2.0.1 plus #331 and the fix commits #340-#363), as
 defined by `doc/specs.md`, `doc/design.md` and `doc/design_v2.md`. The branch changes no hash.
 Date: 2026-10-21. Companion report: [AUDIT_v2_2026-10.md](AUDIT_v2_2026-10.md) (implementation audit, rounds 1
 and 2). Reproduction scripts and the full track reports: [audits/2026-10-algorithm-review/](audits/2026-10-algorithm-review/).
@@ -61,16 +61,17 @@ representative; the design conclusions rest on operation counts, the models and 
    2080 MiB Dataset (design 1.4.1) is a zero-margin construction that depends on the CPU (about 7.3-7.8 for both versions
    on this host; break-even 8.006). The verification target "as fast as CryptoNight" was met with zero margin by v1 and is
    missed by about 3 % in v2 (projected). The premise "one loop iteration takes about one DRAM latency" no longer held
-   for v1 on 4-5 GHz cores; v2 restores it.
-5. **The specification was not sufficient for an independent implementation; it is now.** The clean-room
-   implementation matched the library only after reading `superscalar.cpp`: chapter 6 left 16 generator rules
-   unspecified and contradicted the reference in three places, and the commitment, the instruction byte layout, the
-   opcode map, the CBRANCH target rule and the floating-point L3 rule were missing or ambiguous. All are fixed in
-   `doc/specs.md` on the branch (commit `6b2a054`), including a normative generator procedure verified identical to the
-   reference.
+   for v1 on 4-5 GHz cores in the execution model; v2 restores it (ALG-11).
+5. **The specification was not sufficient for an independent implementation; every gap found is now fixed.** The
+   clean-room implementation matched the library only after reading `superscalar.cpp`: chapter 6 had 16 gaps in the
+   generator rules, three of them statements that contradicted the reference, and the commitment, the instruction byte
+   layout, the opcode map, the CBRANCH target rule and the floating-point L3 rule were missing or ambiguous. All are
+   fixed in `doc/specs.md` on the branch (commit `6b2a054`), including a normative generator procedure verified
+   identical to the reference on 1,200 programs. No one who has not seen the source has yet implemented the corrected
+   text.
 6. **Context.** Vendor claims for RandomX machines (Antminer X9, December 2025: 1 MH/s at 2,472 W; Pinecone R1X:
    1.2 MH/s at 2,055 W) imply 1.9-4.5x the energy efficiency of the best CPU in design_v2.md, assuming a CPU
-   package-to-wall factor of 1.2-2.0. No independent measurement exists. The v2 design received no external review before this one.
+   package-to-wall factor of 1.2-2.0. No independent measurement was found. The v2 design received no external review before this one.
 
 No consensus parameter was changed by this review. Documentation fixes are in commit `6b2a054`.
 
@@ -212,8 +213,8 @@ iteration" balance on current CPUs (ALG-11).
 *Findings:* the CPU rationale holds: fast mode hides DRAM latency whenever 2T >= L (ALG-3, ALG-11). The same lookahead
 is available to every implementation, and it is the change with the largest security effect: a light-mode design can
 overlap three item computations instead of two, which lowers the light/fast cost ratio by about a quarter (2.24 to 1.66, ALG-1). It also
-helps latency-bound specialised fast-mode designs as much as CPUs (ALG-6), and would let a pipelined verifier run
-about 3x faster (ALG-9).
+helps latency-bound specialised fast-mode designs (ALG-6: a v2 iteration takes 0.75-1.12x their v1 time in the model),
+and would let a pipelined verifier run about 3x faster (ALG-9).
 
 *Verdict:* achieves its CPU goal but weakens light-mode tradeoff resistance; no published analysis of this trade-off was found
 (ALG-15). Options in section 7.
@@ -304,7 +305,7 @@ No consensus parameter was changed. Items 1-5 should be settled before v2 is act
 
    | option | effect | CPU verification cost | other costs |
    |---|---|---|---|
-   | A. `RANDOMX_SUPERSCALAR_LATENCY` 170 -> 255 / 340 | 2.44 / 3.21 | model: about 0 on CPUs whose light mode waits on Cache reads (this host: 58 ns of SuperscalarHash per 220 ns Cache read), about +20-30 % at 340 for a 5 GHz desktop with 50-55 ns memory, up to +50 % / +100 % on slow-clocked boards; measured on a 2.1 GHz Xeon: +0 % / +7 % | v1 and v2 no longer share the Dataset: miners rebuild once at the fork; light verifiers reuse the Argon2 Cache and need a second set of 8 SuperscalarHash programs; SuperscalarHash work per Dataset initialisation x1.5-2 (wall time x1.02 / x1.15 measured on one CPU whose initialisation waits on memory) |
+   | A. `RANDOMX_SUPERSCALAR_LATENCY` 170 -> 255 / 340 | 2.44 / 3.21 | model: about 0 on CPUs whose light mode waits on Cache reads (this host: 58 ns of SuperscalarHash per 175-220 ns Cache read), about +20-30 % at 340 for a 5 GHz desktop with 50-55 ns memory, up to +50 % / +100 % on slow-clocked boards; measured on a 2.1 GHz Xeon: +0 % / +7 % | v1 and v2 no longer share the Dataset: miners rebuild once at the fork; light verifiers reuse the Argon2 Cache and need a second set of 8 SuperscalarHash programs; SuperscalarHash work per Dataset initialisation x1.5-2 (wall time x1.02 / x1.15 measured on one CPU whose initialisation waits on memory) |
    | B. `RANDOMX_CACHE_ACCESSES` 8 -> 10 / 12 / 16 | 2.05 / 2.44 / 3.21 | x1.23 / x1.46 / x1.9 (model; each access is a DRAM round trip); measured x1.20 / x1.43 / x1.88 | same Dataset change; moves verification further from the CryptoNight target |
    | C. Prefetch distance back to 1 (keep 384 instructions) | 2.20 | none | gives back v2's main CPU benefit (x1.10-1.27 per iteration on a 5 GHz desktop) |
    | D. 256 instructions with prefetch distance 2 | 1.77 | -0.5 ms | gives back the extra work per hash for little gain |

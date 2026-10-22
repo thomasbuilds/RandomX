@@ -25,3 +25,10 @@ Re-runs that confirmed the reports (all from this folder): T's and X's models an
 lead checks, `spec-6.4-check` (1,200 programs), W's clean-room Python (Cache byte-identical, 6/6 hashes, 8/8 items,
 3/3 commitments), S's statistics on 3,000 new hashes per version, C2's Argon2 graph (433,544 and 430,654 compressions
 per missing block for two keys) and the full-Dataset bit statistics with independent code (bit 450, z = -6.07).
+
+Commit messages on the branch are not rewritten. Three of them carry figures that the reports now correct:
+`2c1f5ec` says E-4 "leaked the 2 MiB mapping of every released scratchpad/cache" (only sizes that are not a multiple
+of the huge page size leaked, and then the whole mapping; the default sizes with 2 MiB pages did not); `51807a3` says
+"at most 275 of 512 literals observed" (over 3,000 keys; the maximum over 20,000 keys was 290); `4230131` says the
+prefetch reduces "the light-mode tradeoff margin ... by about a quarter" (the light/fast cost ratio falls by about a
+quarter, 2.24 to 1.66; its excess over 1 falls by almost half, 1.24 to 0.66).
