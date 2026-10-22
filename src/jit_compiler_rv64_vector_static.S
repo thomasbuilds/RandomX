@@ -398,7 +398,7 @@ v14	= scale mask   = 0x80f0000000000000'80f0000000000000
 
 v15	= all zeroes
 v16	= temporary
-v17	= unused
+v17	= temporary (upper half of the v16-v17 group written by vfwcvt)
 v18	= temporary
 
 v19	= unused
@@ -895,7 +895,7 @@ DECL(randomx_riscv64_vector_program_main_loop_mx_xor_light_mode):
 	xor x5, x24, x26	// x5 = readReg2 ^ readReg3 (JIT compiler will substitute the actual registers)
 	and x5, x5, x19		// x5 = (readReg2 ^ readReg3) & dataset mask
 	slli x5, x5, 32		// JIT compiler will replace it with "nop" for v1
-	xor x14, x14, x5	// mx ^= (readReg2 ^ readReg3) & dataset mask
+	xor x14, x14, x5	// mp ^= (readReg2 ^ readReg3) & dataset mask
 
 	// Save all registers modified when calling dataset_init_scalar_func_ptr
 	addi sp, sp, -192

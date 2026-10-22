@@ -10,7 +10,7 @@
 	mov ebx, ebp                       ;# ebx = ma
 	shr ebx, 6
 	and ebx, RANDOMX_DATASET_BASE_MASK / 64 ;# ebx = Dataset block number
-	xor rbp, rax                       ;# modify "mx"
+	xor rbp, rax                       ;# modify "ma"
 	ror rbp, 32                        ;# swap "ma" and "mx"
 	;# add ebx, datasetOffset / 64
 	;# call 16384
