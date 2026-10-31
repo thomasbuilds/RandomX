@@ -547,9 +547,17 @@ void* generateProgramVectorRV64(uint8_t* buf, Program& prog, ProgramConfiguratio
 					// mul x20 + dst, x20 + dst, x5
 					emit32(0x025A0A33 + (dst << 7) + (dst << 15));
 				}
-				else {
+				else if (offset <= 2047) {
 					// ld x5, offset(x18)
 					emit32(0x00093283 + (offset << 20));
+					// mul x20 + dst, x20 + dst, x5
+					emit32(0x025A0A33 + (dst << 7) + (dst << 15));
+				}
+				else {
+					// addi x5, x18, 2047
+					emit32(0x7FF90293);
+					// ld x5, (offset - 2047)(x5)
+					emit32(0x0002B283 | ((offset - 2047) << 20));
 					// mul x20 + dst, x20 + dst, x5
 					emit32(0x025A0A33 + (dst << 7) + (dst << 15));
 				}
